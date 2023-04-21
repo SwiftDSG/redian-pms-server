@@ -1,5 +1,5 @@
 [package]
-name = "pms_server"
+name = "pms-server"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 actix-web = "4.0.0"
 mongodb = "2.5.0"
+serde = "1.0.160"
+futures = "0.3.28"
