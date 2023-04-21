@@ -1,23 +1,19 @@
-use mongodb::Database;
+use mongodb::{Client, Database};
 
 static mut DB: Option<Database> = None;
 
 pub async fn connect(uri: String) {
-    if let Ok(client) = mongodb::Client::with_uri_str(uri).await {
-        unsafe {
-            DB = Some(client.database("pms"));
-        }
-    } else {
-        panic!("Failed to connect to database")
+    let client = Client::with_uri_str(uri)
+        .await
+        .expect("Failed to connect to database");
+    unsafe {
+        DB = Some(client.database("pms"));
     }
 }
 
 pub fn get_db() -> Database {
     unsafe {
-        if let Some(db) = &DB {
-            return db.clone();
-        } else {
-            panic!("Database is not available yet!")
-        }
+        let db = &DB;
+        db.clone().expect("Database is not available yet!")
     }
 }
