@@ -15,12 +15,14 @@ async fn main() -> io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(models::user::UserAuthenticationMiddlewareFactory)
             .service(routes::user::get_users)
             .service(routes::user::get_user)
             .service(routes::user::create_user)
             .service(routes::user::login)
     })
     .bind(("127.0.0.1", 8000))?
+    .workers(8)
     .run()
     .await
 

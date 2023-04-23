@@ -7,9 +7,11 @@ edition = "2021"
 
 [dependencies]
 actix-web = "4.0.0"
+actix-service = "2.0.2"
 mongodb = "2.5.0"
 serde = "1.0.160"
 futures = "0.3.28"
 pwhash = "1.0.0"
 jsonwebtoken = "8.3.0"
 chrono = "0.4.24"
+futures-util = "0.3.28"

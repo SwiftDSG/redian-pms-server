@@ -39,6 +39,7 @@ pub async fn create_user(payload: web::Json<User>) -> HttpResponse {
 }
 #[post("/users/login")]
 pub async fn login(payload: web::Json<UserCredential>) -> HttpResponse {
+    // let x = req.extensions().get::<UserAuthentication>().cloned();
     let payload: UserCredential = payload.into_inner();
 
     match payload.authenticate().await {

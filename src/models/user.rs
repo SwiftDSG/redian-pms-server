@@ -1,6 +1,15 @@
 use crate::database::get_db;
+use actix_service::{self, Transform};
+use actix_web::{
+    dev::{Service, ServiceRequest, ServiceResponse},
+    Error, HttpMessage,
+};
 use chrono::Utc;
-use futures::stream::TryStreamExt;
+use futures::{
+    future::{ready, LocalBoxFuture, Ready},
+    stream::TryStreamExt,
+    FutureExt,
+};
 use jsonwebtoken::{self, decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use mongodb::{
     bson::{doc, oid::ObjectId},
@@ -8,7 +17,7 @@ use mongodb::{
 };
 use pwhash::bcrypt;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs::read_to_string};
+use std::{collections::BTreeMap, fs::read_to_string, rc::Rc, str::FromStr};
 
 static mut KEYS: BTreeMap<String, String> = BTreeMap::new();
 
@@ -34,6 +43,19 @@ pub struct UserCredential {
     pub email: String,
     pub password: String,
 }
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+pub struct UserAuthenticationData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _id: Option<ObjectId>,
+    pub role: String,
+    pub token: String,
+}
+pub struct UserAuthenticationMiddleware<S> {
+    service: Rc<S>,
+}
+pub struct UserAuthenticationMiddlewareFactory;
+
+pub type UserAuthentication = Rc<UserAuthenticationData>;
 
 impl User {
     pub async fn save(&self) -> Result<ObjectId, String> {
@@ -121,19 +143,82 @@ impl UserCredential {
             Err(String::from("INVALID_COMBINATION"))
         }
     }
-    pub fn verify(token: &String) -> bool {
+    pub fn verify(token: &String) -> Option<ObjectId> {
         let validation: Validation = Validation::new(Algorithm::RS256);
         unsafe {
-            if let Ok(_) = decode::<UserClaims>(
+            if let Ok(data) = decode::<UserClaims>(
                 token,
                 &DecodingKey::from_rsa_pem(&KEYS.get("public_access").unwrap().as_bytes()).unwrap(),
                 &validation,
             ) {
-                return true;
+                if let Ok(_id) = ObjectId::from_str(&data.claims.sub) {
+                    return Some(_id);
+                } else {
+                    return None;
+                }
             } else {
-                false
+                None
             }
         }
+    }
+}
+
+impl<S, B> Service<ServiceRequest> for UserAuthenticationMiddleware<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    actix_service::forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let srv: Rc<S> = self.service.clone();
+
+        async move {
+            let headers: &actix_web::http::header::HeaderMap = req.headers();
+            if let Some(bearer_token) = headers.get("Authorization") {
+                let mut bytes_token: Vec<u8> = Vec::new();
+                for i in bearer_token.as_bytes() {
+                    bytes_token.push(*i);
+                }
+                bytes_token.drain(0..7);
+                let token: String = String::from_utf8(bytes_token).unwrap();
+                if let Some(_id) = UserCredential::verify(&token) {
+                    if let Ok(Some(user)) = User::find_by_id(&_id).await {
+                        let auth_data: UserAuthenticationData = UserAuthenticationData {
+                            _id: Some(_id),
+                            role: user.role,
+                            token,
+                        };
+                        req.extensions_mut()
+                            .insert::<UserAuthentication>(Rc::new(auth_data));
+                    }
+                }
+            }
+            let res: ServiceResponse<B> = srv.call(req).await?;
+            Ok(res)
+        }
+        .boxed_local()
+    }
+}
+impl<S, B> Transform<S, ServiceRequest> for UserAuthenticationMiddlewareFactory
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type Transform = UserAuthenticationMiddleware<S>;
+    type InitError = ();
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(UserAuthenticationMiddleware {
+            service: Rc::new(service),
+        }))
     }
 }
 
