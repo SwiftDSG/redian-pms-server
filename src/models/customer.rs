@@ -69,6 +69,8 @@ pub struct CustomerRequest {
 pub struct CustomerResponse {
     pub _id: Option<ObjectId>,
     pub name: String,
+    pub contact: CustomerContact,
+    pub person: Vec<CustomerPerson>,
 }
 
 impl Customer {
@@ -105,8 +107,8 @@ impl Customer {
         pipeline.push(doc! {
           "$project": {
             "name" : "$name",
-            "email" : "$email",
-            "role" : "$role",
+            "contact" : "$contact",
+            "person" : "$person",
           }
         });
 

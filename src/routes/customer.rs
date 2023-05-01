@@ -3,10 +3,7 @@ use mongodb::bson::oid::ObjectId;
 use regex::Regex;
 use std::str::FromStr;
 
-use crate::models::{
-    customer::{Customer, CustomerQuery, CustomerRequest},
-    role::Role,
-};
+use crate::models::customer::{Customer, CustomerQuery, CustomerRequest};
 
 #[get("/customers")]
 pub async fn get_customers() -> HttpResponse {
@@ -38,3 +35,4 @@ pub async fn create_customer(
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
+//+validasi get 1 per 1, update, delete,

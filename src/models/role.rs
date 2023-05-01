@@ -39,6 +39,9 @@ impl Role {
             "get_roles" => self.permission.push(payload.to_string()),
             "get_role" => self.permission.push(payload.to_string()),
             "add_role" => self.permission.push(payload.to_string()),
+            "add_customer" => self.permission.push(payload.to_string()),
+            "get_customer" => self.permission.push(payload.to_string()),
+            "update_customer" => self.permission.push(payload.to_string()),
             _ => (),
         };
     }
