@@ -7,6 +7,7 @@ mod routes;
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
+    let port: u16 = 8000;
     let db_uri: String =
         std::env::var("MONGODB_URI").unwrap_or_else(|_| String::from("mongodb://localhost:27017"));
 
@@ -20,8 +21,9 @@ async fn main() -> io::Result<()> {
             .service(routes::user::get_user)
             .service(routes::user::create_user)
             .service(routes::user::login)
+            .service(routes::role::create_role)
     })
-    .bind(("127.0.0.1", 8000))?
+    .bind(("127.0.0.1", port))?
     .workers(8)
     .run()
     .await

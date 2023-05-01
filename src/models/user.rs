@@ -7,12 +7,12 @@ use actix_web::{
 use chrono::Utc;
 use futures::{
     future::{ready, LocalBoxFuture, Ready},
-    stream::TryStreamExt,
+    stream::StreamExt,
     FutureExt,
 };
 use jsonwebtoken::{self, decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use mongodb::{
-    bson::{doc, oid::ObjectId},
+    bson::{doc, from_document, oid::ObjectId, to_bson},
     Collection, Database,
 };
 use pwhash::bcrypt;
@@ -36,18 +36,37 @@ pub struct User {
     pub name: String,
     pub email: String,
     pub password: String,
-    pub role: String,
+    pub role: Vec<ObjectId>,
 }
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct UserCredential {
     pub email: String,
     pub password: String,
 }
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
-pub struct UserAuthenticationData {
-    #[serde(skip_serializing_if = "Option::is_none")]
+#[derive(Debug)]
+pub struct UserQuery {
     pub _id: Option<ObjectId>,
-    pub role: String,
+    pub email: Option<String>,
+    pub limit: Option<usize>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UserRequest {
+    pub name: String,
+    pub email: String,
+    pub password: String,
+    pub role: Option<Vec<String>>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UserResponse {
+    pub _id: Option<ObjectId>,
+    pub name: String,
+    pub email: String,
+    pub role: Vec<ObjectId>,
+}
+#[derive(Debug)]
+pub struct UserAuthenticationData {
+    pub _id: Option<ObjectId>,
+    pub role: Vec<ObjectId>,
     pub token: String,
 }
 pub struct UserAuthenticationMiddleware<S> {
@@ -58,39 +77,70 @@ pub struct UserAuthenticationMiddlewareFactory;
 pub type UserAuthentication = Rc<UserAuthenticationData>;
 
 impl User {
-    pub async fn save(&self) -> Result<ObjectId, String> {
+    pub async fn save(&mut self) -> Result<ObjectId, String> {
         let db: Database = get_db();
         let collection: Collection<User> = db.collection::<User>("users");
 
-        let mut user: User = Self {
-            _id: Some(ObjectId::new()),
-            ..self.clone()
-        };
+        self._id = Some(ObjectId::new());
 
-        if let Ok(hash) = bcrypt::hash(&user.password) {
-            user.password = hash;
+        if let Ok(hash) = bcrypt::hash(&self.password) {
+            self.password = hash;
             collection
-                .insert_one(user, None)
+                .insert_one(self, None)
                 .await
-                .map_err(|_| String::from("INSERTING_FAILED"))
-                .map(|result| result)
-                .and_then(|result| Ok(result.inserted_id.as_object_id().unwrap()))
+                .map_err(|_| "INSERTING_FAILED".to_string())
+                .map(|result| result.inserted_id.as_object_id().unwrap())
         } else {
-            Err(String::from("HASHING_FAILED"))
+            Err("HASHING_FAILED".to_string())
         }
     }
-    pub async fn find_many() -> Result<Vec<User>, String> {
+    pub async fn find_many(query: &UserQuery) -> Result<Vec<UserResponse>, String> {
         let db: Database = get_db();
         let collection: Collection<User> = db.collection::<User>("users");
 
-        if let Ok(cursor) = collection.find(doc! {}, None).await {
-            return cursor
-                .try_collect()
-                .await
-                .map_err(|_| String::from("COLLECTING_FAILED"));
-        } else {
-            Err(String::from("USER_NOT_FOUND"))
+        let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
+        let mut users: Vec<UserResponse> = Vec::new();
+
+        if let Some(limit) = query.limit {
+            pipeline.push(doc! {
+                "$limit": to_bson::<usize>(&limit).unwrap()
+            })
         }
+
+        pipeline.push(doc! {
+            "$project": {
+                "name": "$name",
+                "email": "$email",
+                "role": "$role",
+            }
+        });
+
+        if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
+            while let Some(Ok(doc)) = cursor.next().await {
+                let user: UserResponse = from_document::<UserResponse>(doc).unwrap();
+                users.push(user);
+            }
+            if !users.is_empty() {
+                Ok(users)
+            } else {
+                Err("USER_NOT_FOUND".to_string())
+            }
+        } else {
+            Err("USER_NOT_FOUND".to_string())
+        }
+
+        // if let Ok(cursor) = collection.aggregate(pipeline, None).await {
+        //     cursor
+        //         .try_collect()
+        //         .map(|result| {
+        //             let user: UserResponse = from_document(result?)?;
+        //             users.push(user);
+        //         })
+        //         .map_err(|_| "COLLECTING_FAILED".to_string());
+        //     users
+        // } else {
+        //     Err("USER_NOT_FOUND".to_string())
+        // }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<User>, String> {
         let db: Database = get_db();
@@ -99,7 +149,7 @@ impl User {
         collection
             .find_one(doc! { "_id": _id }, None)
             .await
-            .map_err(|_| String::from("USER_NOT_FOUND"))
+            .map_err(|_| "USER_NOT_FOUND".to_string())
     }
     pub async fn find_by_email(email: &String) -> Result<Option<User>, String> {
         let db: Database = get_db();
@@ -108,7 +158,7 @@ impl User {
         collection
             .find_one(doc! { "email": email }, None)
             .await
-            .map_err(|_| String::from("USER_NOT_FOUND"))
+            .map_err(|_| "USER_NOT_FOUND".to_string())
     }
 }
 
@@ -118,9 +168,9 @@ impl UserCredential {
             if bcrypt::verify(self.password.clone(), &user.password) {
                 let claims: UserClaims = UserClaims {
                     sub: ObjectId::to_string(&user._id.unwrap()),
-                    exp: Utc::now().timestamp_millis() + 86400000,
-                    iss: String::from("Redian"),
-                    aud: String::from("http://localhost:8000"),
+                    exp: Utc::now().timestamp() + 86400,
+                    iss: "Redian".to_string(),
+                    aud: "http://localhost:8000".to_string(),
                 };
 
                 let header: Header = Header::new(Algorithm::RS256);
@@ -128,33 +178,33 @@ impl UserCredential {
                     if let Ok(token) = encode(
                         &header,
                         &claims,
-                        &EncodingKey::from_rsa_pem(&KEYS.get("private_access").unwrap().as_bytes())
+                        &EncodingKey::from_rsa_pem(KEYS.get("private_access").unwrap().as_bytes())
                             .unwrap(),
                     ) {
-                        return Ok(token);
+                        Ok(token)
                     } else {
-                        Err(String::from("GENERATING_FAILED"))
+                        Err("GENERATING_FAILED".to_string())
                     }
                 }
             } else {
-                Err(String::from("INVALID_COMBINATION"))
+                Err("INVALID_COMBINATION".to_string())
             }
         } else {
-            Err(String::from("INVALID_COMBINATION"))
+            Err("INVALID_COMBINATION".to_string())
         }
     }
-    pub fn verify(token: &String) -> Option<ObjectId> {
+    pub fn verify(token: &str) -> Option<ObjectId> {
         let validation: Validation = Validation::new(Algorithm::RS256);
         unsafe {
             if let Ok(data) = decode::<UserClaims>(
                 token,
-                &DecodingKey::from_rsa_pem(&KEYS.get("public_access").unwrap().as_bytes()).unwrap(),
+                &DecodingKey::from_rsa_pem(KEYS.get("public_access").unwrap().as_bytes()).unwrap(),
                 &validation,
             ) {
                 if let Ok(_id) = ObjectId::from_str(&data.claims.sub) {
-                    return Some(_id);
+                    Some(_id)
                 } else {
-                    return None;
+                    None
                 }
             } else {
                 None
@@ -228,7 +278,7 @@ pub fn load_keys() {
     let public_access_file =
         read_to_string("./keys/public_access.pem").expect("LOAD_FAILED_PUBLIC_ACCESS");
     unsafe {
-        KEYS.insert(String::from("private_access"), private_access_file);
-        KEYS.insert(String::from("public_access"), public_access_file);
+        KEYS.insert("private_access".to_string(), private_access_file);
+        KEYS.insert("public_access".to_string(), public_access_file);
     }
 }
