@@ -48,9 +48,9 @@ pub async fn delete_role(_id: web::Path<String>) -> HttpResponse {
 pub async fn create_role(payload: web::Json<RoleRequest>, req: HttpRequest) -> HttpResponse {
     if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
         if !Role::validate(&issuer.role, &"add_role".to_string()).await {
-            let payload = payload.into_inner();
+            let payload: RoleRequest = payload.into_inner();
 
-            let mut role = Role {
+            let mut role: Role = Role {
                 _id: None,
                 name: payload.name,
                 permission: Vec::<String>::new(),
