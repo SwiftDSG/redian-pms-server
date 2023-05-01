@@ -29,7 +29,7 @@ struct UserClaims {
     sub: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _id: Option<ObjectId>,
