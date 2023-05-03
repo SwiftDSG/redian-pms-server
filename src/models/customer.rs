@@ -126,4 +126,13 @@ impl Customer {
             Err("error".to_string())
         }
     }
+    pub async fn find_by_id(_id: &ObjectId) -> Result<Option<Customer>, String> {
+        let db: Database = get_db();
+        let collection: Collection<Customer> = db.collection::<Customer>("customers");
+
+        collection
+            .find_one(doc! { "_id": _id }, None)
+            .await
+            .map_err(|_| "CUSTOMER_NOT_FOUND".to_string())
+    }
 }

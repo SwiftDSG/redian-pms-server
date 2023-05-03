@@ -3,7 +3,11 @@ use mongodb::bson::oid::ObjectId;
 use regex::Regex;
 use std::str::FromStr;
 
-use crate::models::customer::{Customer, CustomerQuery, CustomerRequest};
+use crate::models::{
+    customer::{Customer, CustomerQuery, CustomerRequest},
+    role::Role,
+    user::{User, UserAuthentication},
+};
 
 #[get("/customers")]
 pub async fn get_customers() -> HttpResponse {
@@ -18,6 +22,19 @@ pub async fn get_customers() -> HttpResponse {
         Err(error) => HttpResponse::BadRequest().body(error),
     }
 }
+#[get("/customers/{_id}")]
+pub async fn get_customer(_id: web::Path<String>) -> HttpResponse {
+    let _id: String = _id.into_inner();
+    if let Ok(_id) = ObjectId::from_str(&_id) {
+        return match Customer::find_by_id(&_id).await {
+            Ok(Some(customer)) => HttpResponse::Ok().json(customer),
+            Ok(None) => HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string()),
+            Err(error) => HttpResponse::InternalServerError().body(error),
+        };
+    } else {
+        HttpResponse::BadRequest().body("INVALID_ID".to_string())
+    }
+}
 #[post("/customers")]
 pub async fn create_customer(
     payload: web::Json<CustomerRequest>,
@@ -30,6 +47,25 @@ pub async fn create_customer(
         contact: payload.contact,
         person: payload.person,
     };
+    if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
+        if !Role::validate(&issuer.role, &"add_customer".to_string()).await {
+            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+        }
+    } else {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+    // if let Some(roles) = payload.role {
+    //     for i in roles.iter() {
+    //         if let Ok(_id) = ObjectId::from_str(i) {
+    //             if let Ok(Some(_)) = Role::find_by_id(&_id).await {
+    //                 user.role.push(_id);
+    //             }
+    //         }
+    //     }
+    // } else {
+    //     return HttpResponse::BadRequest().body("USER_MUST_HAVE_ROLES".to_string());
+    // }
+
     match customer.save().await {
         Ok(id) => HttpResponse::Created().body(id.to_string()),
         Err(error) => HttpResponse::InternalServerError().body(error),

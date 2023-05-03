@@ -23,6 +23,7 @@ async fn main() -> io::Result<()> {
             .service(routes::user::login)
             .service(routes::role::create_role)
             .service(routes::customer::get_customers)
+            .service(routes::customer::get_customer)
             .service(routes::customer::create_customer)
     })
     .bind(("127.0.0.1", port))?
