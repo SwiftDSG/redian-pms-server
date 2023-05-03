@@ -66,7 +66,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         .is_ok()
     {
         if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
-            if !Role::validate(&issuer.role, &RolePermission::AddUser).await {
+            if !Role::validate(&issuer.role, &RolePermission::CreateUser).await {
                 return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
             }
         } else {

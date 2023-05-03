@@ -12,13 +12,16 @@ pub enum RolePermission {
     Owner,
     GetUsers,
     GetUser,
-    AddUser,
+    CreateUser,
     GetRoles,
     GetRole,
-    AddRole,
+    CreateRole,
+    GetCustomers,
+    GetCustomer,
+    CreateCustomer,
     GetProjects,
     GetProject,
-    AddProject,
+    CreateProject,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

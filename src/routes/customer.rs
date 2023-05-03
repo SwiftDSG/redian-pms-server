@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use crate::models::{
     customer::{Customer, CustomerQuery, CustomerRequest},
-    role::Role,
+    role::{Role, RolePermission},
     user::{User, UserAuthentication},
 };
 
@@ -48,7 +48,7 @@ pub async fn create_customer(
         person: payload.person,
     };
     if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
-        if !Role::validate(&issuer.role, &"add_customer".to_string()).await {
+        if !Role::validate(&issuer.role, &RolePermission::CreateCustomer).await {
             return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
         }
     } else {
