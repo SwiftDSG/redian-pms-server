@@ -69,6 +69,8 @@ pub struct CustomerRequest {
 pub struct CustomerResponse {
     pub _id: Option<ObjectId>,
     pub name: String,
+    pub contact: CustomerContact,
+    pub person: Vec<CustomerPerson>,
 }
 
 impl Customer {
@@ -105,8 +107,8 @@ impl Customer {
         pipeline.push(doc! {
           "$project": {
             "name" : "$name",
-            "email" : "$email",
-            "role" : "$role",
+            "contact" : "$contact",
+            "person" : "$person",
           }
         });
 
@@ -123,5 +125,14 @@ impl Customer {
         } else {
             Err("error".to_string())
         }
+    }
+    pub async fn find_by_id(_id: &ObjectId) -> Result<Option<Customer>, String> {
+        let db: Database = get_db();
+        let collection: Collection<Customer> = db.collection::<Customer>("customers");
+
+        collection
+            .find_one(doc! { "_id": _id }, None)
+            .await
+            .map_err(|_| "CUSTOMER_NOT_FOUND".to_string())
     }
 }
