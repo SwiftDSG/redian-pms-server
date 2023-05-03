@@ -4,7 +4,7 @@ use regex::Regex;
 use std::str::FromStr;
 
 use crate::models::{
-    role::Role,
+    role::{Role, RolePermission},
     user::{User, UserAuthentication, UserCredential, UserQuery, UserRequest},
 };
 
@@ -66,7 +66,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         .is_ok()
     {
         if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
-            if !Role::validate(&issuer.role, &"add_user".to_string()).await {
+            if !Role::validate(&issuer.role, &RolePermission::AddUser).await {
                 return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
             }
         } else {
@@ -74,10 +74,8 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         }
         if let Some(roles) = payload.role {
             for i in roles.iter() {
-                if let Ok(_id) = ObjectId::from_str(i) {
-                    if let Ok(Some(_)) = Role::find_by_id(&_id).await {
-                        user.role.push(_id);
-                    }
+                if let Ok(Some(_)) = Role::find_by_id(&i).await {
+                    user.role.push(*i);
                 }
             }
         } else {
@@ -90,7 +88,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         let mut role: Role = Role {
             _id: None,
             name: "Owner".to_string(),
-            permission: Vec::<String>::new(),
+            permission: Vec::<RolePermission>::new(),
         };
         role.set_as_owner();
         if let Ok(_id) = role.save().await {
@@ -100,7 +98,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         }
     }
 
-    if (User::find_by_email(&user.email).await).is_ok() {
+    if let Ok(Some(_)) = User::find_by_email(&user.email).await {
         HttpResponse::BadRequest().body("USER_ALREADY_EXIST".to_string())
     } else {
         match user.save().await {

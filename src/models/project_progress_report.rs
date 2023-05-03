@@ -6,6 +6,7 @@ pub struct ProjectProgressReport {
     _id: Option<ObjectId>,
     project_id: ObjectId,
     date: DateTime,
+    time: [[u8; 2]; 2],
     actual: Vec<ProjectProgressReportActual>,
     plan: Option<Vec<ProjectProgressReportPlan>>,
     documentation: Option<Vec<ProjectProgressReportDocumentation>>,

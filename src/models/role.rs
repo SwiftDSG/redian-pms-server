@@ -6,12 +6,27 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RolePermission {
+    Owner,
+    GetUsers,
+    GetUser,
+    AddUser,
+    GetRoles,
+    GetRole,
+    AddRole,
+    GetProjects,
+    GetProject,
+    AddProject,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Role {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _id: Option<ObjectId>,
     pub name: String,
-    pub permission: Vec<String>,
+    pub permission: Vec<RolePermission>,
 }
 #[derive(Debug)]
 pub struct RoleQuery {
@@ -21,33 +36,25 @@ pub struct RoleQuery {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RoleRequest {
     pub name: String,
-    pub permission: Vec<String>,
+    pub permission: Vec<RolePermission>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RoleResponse {
     pub _id: Option<ObjectId>,
     pub name: String,
-    pub permission: Vec<String>,
+    pub permission: Vec<RolePermission>,
 }
 
 impl Role {
-    pub fn add_permission(&mut self, payload: &str) {
-        match payload {
-            "get_users" => self.permission.push(payload.to_string()),
-            "get_user" => self.permission.push(payload.to_string()),
-            "add_user" => self.permission.push(payload.to_string()),
-            "get_roles" => self.permission.push(payload.to_string()),
-            "get_role" => self.permission.push(payload.to_string()),
-            "add_role" => self.permission.push(payload.to_string()),
-            _ => (),
-        };
-    }
-    pub async fn validate(ids: &[ObjectId], action: &String) -> bool {
+    pub async fn validate(ids: &[ObjectId], permit: &RolePermission) -> bool {
         for id in ids.iter() {
             if let Ok(Some(role)) = Self::find_by_id(id).await {
-                if role.permission.contains(&"Owner".to_string())
-                    || role.permission.contains(action)
-                {
+                if role.permission.iter().any(|permission| {
+                    return match permission {
+                        RolePermission::Owner => true,
+                        _ => permission == permit,
+                    };
+                }) {
                     return true;
                 }
             }
@@ -55,7 +62,7 @@ impl Role {
         false
     }
     pub fn set_as_owner(&mut self) {
-        self.permission.push("Owner".to_string());
+        self.permission.push(RolePermission::Owner);
     }
     pub async fn save(&mut self) -> Result<ObjectId, String> {
         let db: Database = get_db();

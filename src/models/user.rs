@@ -54,7 +54,7 @@ pub struct UserRequest {
     pub name: String,
     pub email: String,
     pub password: String,
-    pub role: Option<Vec<String>>,
+    pub role: Option<Vec<ObjectId>>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserResponse {

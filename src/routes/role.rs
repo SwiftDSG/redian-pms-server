@@ -3,7 +3,7 @@ use mongodb::bson::oid::ObjectId;
 use std::str::FromStr;
 
 use crate::models::{
-    role::{Role, RoleQuery, RoleRequest},
+    role::{Role, RolePermission, RoleQuery, RoleRequest},
     user::UserAuthentication,
 };
 
@@ -47,20 +47,16 @@ pub async fn delete_role(_id: web::Path<String>) -> HttpResponse {
 #[post("/roles")]
 pub async fn create_role(payload: web::Json<RoleRequest>, req: HttpRequest) -> HttpResponse {
     if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        if !Role::validate(&issuer.role, &"add_role".to_string()).await {
+        if Role::validate(&issuer.role, &RolePermission::AddRole).await {
             let payload: RoleRequest = payload.into_inner();
 
             let mut role: Role = Role {
                 _id: None,
                 name: payload.name,
-                permission: Vec::<String>::new(),
+                permission: payload.permission,
             };
 
-            for i in payload.permission.iter() {
-                role.add_permission(i);
-            }
-
-            if role.permission.is_empty() {
+            if role.permission.contains(&RolePermission::Owner) {
                 return HttpResponse::BadRequest()
                     .body("ROLE_MUST_HAVE_VALID_PERMISSION".to_string());
             }
