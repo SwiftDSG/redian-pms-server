@@ -1,12 +1,11 @@
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse};
 use mongodb::bson::oid::ObjectId;
-use regex::Regex;
 use std::str::FromStr;
 
 use crate::models::{
     customer::{Customer, CustomerQuery, CustomerRequest},
     role::{Role, RolePermission},
-    user::{User, UserAuthentication},
+    user::UserAuthentication,
 };
 
 #[get("/customers")]

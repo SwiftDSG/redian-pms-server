@@ -3,7 +3,9 @@ use mongodb::bson::oid::ObjectId;
 use std::str::FromStr;
 
 use crate::models::{
+    customer::Customer,
     project::{Project, ProjectQuery, ProjectRequest, ProjectStatus},
+    role::{Role, RolePermission},
     user::UserAuthentication,
 };
 
@@ -46,20 +48,33 @@ use crate::models::{
 // }
 #[post("/projects")]
 pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest) -> HttpResponse {
-    let payload: ProjectRequest = payload.into_inner();
+    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
+        if !Role::validate(&issuer.role, &RolePermission::CreateProject).await {
+            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+        }
 
-    let project: Project = Project {
-        _id: None,
-        customer_id: payload.customer_id,
-        name: payload.name,
-        code: payload.code,
-        status: ProjectStatus::Pending,
-        member: None,
-    };
+        let payload: ProjectRequest = payload.into_inner();
 
-    println!("{:#?}", project);
+        if let Ok(Some(_)) = Customer::find_by_id(&payload.customer_id).await {
+            let project: Project = Project {
+                _id: None,
+                customer_id: payload.customer_id,
+                name: payload.name,
+                code: payload.code,
+                status: ProjectStatus::Pending,
+                member: None,
+            };
 
-    HttpResponse::Ok().body("Ok".to_string())
+            println!("{:#?}", project);
+
+            HttpResponse::Ok().body("Ok".to_string())
+        } else {
+            HttpResponse::BadRequest().body("CUSTOMER_NOT_FOUND".to_string())
+        }
+    } else {
+        HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string())
+    }
+
     // if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
     //     if !Project::validate(&issuer.project, &"add_project".to_string()).await {
     //         let payload: ProjectRequest = payload.into_inner();

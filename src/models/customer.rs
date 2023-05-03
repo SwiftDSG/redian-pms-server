@@ -1,34 +1,10 @@
 use crate::database::get_db;
-use actix_service::{self, Transform};
-use actix_web::{
-    dev::{Service, ServiceRequest, ServiceResponse},
-    Error, HttpMessage,
-};
-use chrono::Utc;
-use futures::{
-    future::{ready, LocalBoxFuture, Ready},
-    stream::StreamExt,
-    stream::TryStreamExt,
-    FutureExt,
-};
-use jsonwebtoken::{self, decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use futures::stream::StreamExt;
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_bson},
     Collection, Database,
 };
-use pwhash::bcrypt;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs::read_to_string, rc::Rc, str::FromStr};
-
-// static mut KEYS: BTreeMap<String, String> = BTreeMap::new();
-
-// #[derive(Debug, Serialize, Deserialize)]
-// struct UserClaims {
-//     aud: String,
-//     exp: i64,
-//     iss: String,
-//     sub: String,
-// }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Customer {
