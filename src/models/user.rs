@@ -128,19 +128,6 @@ impl User {
         } else {
             Err("USER_NOT_FOUND".to_string())
         }
-
-        // if let Ok(cursor) = collection.aggregate(pipeline, None).await {
-        //     cursor
-        //         .try_collect()
-        //         .map(|result| {
-        //             let user: UserResponse = from_document(result?)?;
-        //             users.push(user);
-        //         })
-        //         .map_err(|_| "COLLECTING_FAILED".to_string());
-        //     users
-        // } else {
-        //     Err("USER_NOT_FOUND".to_string())
-        // }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<User>, String> {
         let db: Database = get_db();

@@ -65,8 +65,6 @@ impl Customer {
             .await
             .map_err(|_| "INSERTING_FAILED".to_string())
             .map(|result| result.inserted_id.as_object_id().unwrap())
-
-        // Err("error".to_string());
     }
     pub async fn find_many(query: &CustomerQuery) -> Result<Vec<CustomerResponse>, String> {
         let db: Database = get_db();
