@@ -1330,6 +1330,7 @@ dependencies = [
  "chrono",
  "futures",
  "jsonwebtoken",
+ "log",
  "mongodb",
  "pwhash",
  "regex",

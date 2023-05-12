@@ -86,21 +86,21 @@ pub async fn update_customer(
         }
         let _id: String = _id.into_inner();
         if let Ok(_id) = ObjectId::from_str(&_id) {
-            // if let Ok(Some(customer)) = Customer::find_by_id(&_id).await {
-            let payload: Customer = payload.into_inner();
-            let mut customer: Customer = Customer {
-                _id: payload._id,
-                name: payload.name,
-                contact: payload.contact,
-                person: payload.person,
-            };
-            return match customer.update_customer().await {
-                Ok(customer_id) => HttpResponse::Ok().body(customer_id.to_string()),
-                Err(error) => HttpResponse::InternalServerError().body(error),
-            };
-            // } else {
-            //     HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string())
-            // }
+            if let Ok(Some(_)) = Customer::find_by_id(&_id).await {
+                let payload: Customer = payload.into_inner();
+                let mut customer: Customer = Customer {
+                    _id: payload._id,
+                    name: payload.name,
+                    contact: payload.contact,
+                    person: payload.person,
+                };
+                return match customer.update_customer().await {
+                    Ok(customer_id) => HttpResponse::Ok().body(customer_id.to_string()),
+                    Err(error) => HttpResponse::InternalServerError().body(error),
+                };
+            } else {
+                HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string())
+            }
         } else {
             HttpResponse::BadRequest().body("INVALID_ID".to_string())
         }
