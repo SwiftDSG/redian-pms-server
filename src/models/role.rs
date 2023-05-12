@@ -17,6 +17,7 @@ pub enum RolePermission {
     GetRole,
     CreateRole,
     GetCustomers,
+    UpdateCustomer,
     GetCustomer,
     CreateCustomer,
     GetProjects,
