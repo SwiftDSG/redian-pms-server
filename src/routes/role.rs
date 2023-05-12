@@ -46,27 +46,30 @@ pub async fn delete_role(_id: web::Path<String>) -> HttpResponse {
 }
 #[post("/roles")]
 pub async fn create_role(payload: web::Json<RoleRequest>, req: HttpRequest) -> HttpResponse {
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        if !Role::validate(&issuer.role, &RolePermission::CreateRole).await {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
-        let payload: RoleRequest = payload.into_inner();
-
-        let mut role: Role = Role {
-            _id: None,
-            name: payload.name,
-            permission: payload.permission,
-        };
-
-        if role.permission.contains(&RolePermission::Owner) {
-            return HttpResponse::BadRequest().body("ROLE_MUST_HAVE_VALID_PERMISSION".to_string());
-        }
-
-        match role.save().await {
-            Ok(id) => HttpResponse::Created().body(id.to_string()),
-            Err(error) => HttpResponse::InternalServerError().body(error),
-        }
+    let issuer_role: Vec<ObjectId>;
+    if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
+        issuer_role = issuer.role.clone();
     } else {
-        HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string())
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+    if issuer_role.is_empty() || !Role::validate(&issuer_role, &RolePermission::CreateUser).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    let payload: RoleRequest = payload.into_inner();
+
+    let mut role: Role = Role {
+        _id: None,
+        name: payload.name,
+        permission: payload.permission,
+    };
+
+    if role.permission.contains(&RolePermission::Owner) {
+        return HttpResponse::BadRequest().body("ROLE_MUST_HAVE_VALID_PERMISSION".to_string());
+    }
+
+    match role.save().await {
+        Ok(id) => HttpResponse::Created().body(id.to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }

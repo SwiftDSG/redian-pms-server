@@ -65,16 +65,21 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
     .await)
         .is_ok()
     {
+        let issuer_role: Vec<ObjectId>;
         if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
-            if !Role::validate(&issuer.role, &RolePermission::CreateUser).await {
-                return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-            }
+            issuer_role = issuer.role.clone();
         } else {
             return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
         }
+        if issuer_role.is_empty()
+            || !Role::validate(&issuer_role, &RolePermission::CreateUser).await
+        {
+            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+        }
+
         if let Some(roles) = payload.role {
             for i in roles.iter() {
-                if let Ok(Some(_)) = Role::find_by_id(&i).await {
+                if let Ok(Some(_)) = Role::find_by_id(i).await {
                     user.role.push(*i);
                 }
             }
