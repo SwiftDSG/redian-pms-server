@@ -43,15 +43,13 @@ impl ProjectRole {
         permit: &ProjectRolePermission,
     ) -> bool {
         if let Ok(Some(project)) = Project::find_by_id(&project_id).await {
-            if let Some(members) = project.member {
+            if let Some(members) = &project.member {
                 if let Some(member) = members.iter().find(|&a| a._id == *user_id) {
-                    for id in member.role_id.iter() {
+                    for id in &member.role_id {
                         if let Ok(Some(role)) = Self::find_by_id(id).await {
-                            if role.permission.iter().any(|permission| {
-                                return match permission {
-                                    ProjectRolePermission::Owner => true,
-                                    _ => permission == permit,
-                                };
+                            if role.permission.iter().any(|permission| match permission {
+                                ProjectRolePermission::Owner => return true,
+                                _ => return permission == permit,
                             }) {
                                 return true;
                             }
@@ -85,7 +83,7 @@ impl ProjectRole {
         collection
             .find_one(doc! { "_id": _id }, None)
             .await
-            .map_err(|_| "ROLE_NOT_FOUND".to_string())
+            .map_err(|_| "PROJECT_ROLE_NOT_FOUND".to_string())
     }
     pub async fn delete_by_id(_id: &ObjectId) -> Result<u64, String> {
         let db: Database = get_db();
@@ -94,7 +92,7 @@ impl ProjectRole {
         collection
             .delete_one(doc! { "_id": _id }, None)
             .await
-            .map_err(|_| "ROLE_NOT_FOUND".to_string())
+            .map_err(|_| "PROJECT_ROLE_NOT_FOUND".to_string())
             .map(|result| result.deleted_count)
     }
 }
