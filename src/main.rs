@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::{http, App, HttpServer};
+use actix_web::{App, HttpServer};
 use std::{fs::read_to_string, io};
 
 mod database;
@@ -43,15 +43,10 @@ async fn main() -> io::Result<()> {
     models::user::load_keys();
 
     HttpServer::new(move || {
-        let cors = Cors::permissive();
-        // .allow_any_origin()
-        // .allow_any_header()
-        // .allow_any_method();
-        // .allowed_origin("http://localhost:3000")
-        // .allowed_methods(vec!["GET", "POST", "OPTIONS", "PATCH", "PUT"])
-        // .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
-        // .allowed_header(http::header::CONTENT_TYPE)
-        // .max_age(3600);
+        let cors = Cors::default()
+            .allowed_origin(&std::env::var("CLIENT_URL").unwrap())
+            .allow_any_header()
+            .allow_any_method();
         App::new()
             .wrap(models::user::UserAuthenticationMiddlewareFactory)
             .wrap(cors)
@@ -84,12 +79,4 @@ async fn main() -> io::Result<()> {
     .workers(8)
     .run()
     .await
-
-    // Alternative
-    // HttpServer::new(move || {
-    //     App::new()
-    //         .route("/users", web::get().to(handlers::get_users))
-    //         .route("/users/{id}", web::get().to(handlers::get_user_by_id))
-    //         .route("/users", web::post().to(handlers::add_user))
-    //         .route("/users/{id}", web::delete().to(handlers::delete_user))
 }
