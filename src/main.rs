@@ -1,4 +1,5 @@
-use actix_web::{App, HttpServer};
+use actix_cors::Cors;
+use actix_web::{http, App, HttpServer};
 use std::{fs::read_to_string, io};
 
 mod database;
@@ -42,8 +43,18 @@ async fn main() -> io::Result<()> {
     models::user::load_keys();
 
     HttpServer::new(move || {
+        let cors = Cors::permissive();
+        // .allow_any_origin()
+        // .allow_any_header()
+        // .allow_any_method();
+        // .allowed_origin("http://localhost:3000")
+        // .allowed_methods(vec!["GET", "POST", "OPTIONS", "PATCH", "PUT"])
+        // .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
+        // .allowed_header(http::header::CONTENT_TYPE)
+        // .max_age(3600);
         App::new()
             .wrap(models::user::UserAuthenticationMiddlewareFactory)
+            .wrap(cors)
             .service(routes::user::get_users)
             .service(routes::user::get_user)
             .service(routes::user::create_user)
