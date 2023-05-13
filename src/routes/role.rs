@@ -33,7 +33,15 @@ pub async fn get_role(_id: web::Path<String>) -> HttpResponse {
     }
 }
 #[delete("/roles/{_id}")]
-pub async fn delete_role(_id: web::Path<String>) -> HttpResponse {
+pub async fn delete_role(_id: web::Path<String>, req: HttpRequest) -> HttpResponse {
+    let issuer_role = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer.role.clone(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if issuer_role.is_empty() || !Role::validate(&issuer_role, &RolePermission::DeleteRole).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
     let _id: String = _id.into_inner();
     if let Ok(_id) = ObjectId::from_str(&_id) {
         return match Role::delete_by_id(&_id).await {
@@ -46,13 +54,11 @@ pub async fn delete_role(_id: web::Path<String>) -> HttpResponse {
 }
 #[post("/roles")]
 pub async fn create_role(payload: web::Json<RoleRequest>, req: HttpRequest) -> HttpResponse {
-    let issuer_role: Vec<ObjectId>;
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
-        issuer_role = issuer.role.clone();
-    } else {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-    }
-    if issuer_role.is_empty() || !Role::validate(&issuer_role, &RolePermission::CreateUser).await {
+    let issuer_role = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer.role.clone(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if issuer_role.is_empty() || !Role::validate(&issuer_role, &RolePermission::CreateRole).await {
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
 

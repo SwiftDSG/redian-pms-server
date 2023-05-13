@@ -81,71 +81,72 @@ pub async fn get_project(_id: web::Path<String>) -> HttpResponse {
 // }
 #[post("/projects")] // FINISHED
 pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest) -> HttpResponse {
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        if !Role::validate(&issuer.role, &RolePermission::CreateProject).await {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
+    let issuer = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer.clone(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if issuer.role.is_empty() || !Role::validate(&issuer.role, &RolePermission::CreateProject).await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
 
-        let payload: ProjectRequest = payload.into_inner();
+    let payload: ProjectRequest = payload.into_inner();
 
-        let mut project: Project = Project {
-            _id: None,
-            customer_id: payload.customer_id,
-            name: payload.name,
-            code: payload.code,
-            status: vec![ProjectStatus {
-                kind: ProjectStatusKind::Pending,
-                time: DateTime::from_millis(Utc::now().timestamp_millis()),
-                message: None,
-            }],
-            member: None,
-            area: None,
-            holiday: payload.holiday,
-        };
-        match project.save().await {
-            Ok(project_id) => {
-                let mut project_role: ProjectRole = ProjectRole {
-                    _id: None,
-                    name: "Owner".to_string(),
-                    permission: vec![ProjectRolePermission::Owner],
-                    project_id,
-                };
+    let mut project: Project = Project {
+        _id: None,
+        customer_id: payload.customer_id,
+        name: payload.name,
+        code: payload.code,
+        status: vec![ProjectStatus {
+            kind: ProjectStatusKind::Pending,
+            time: DateTime::from_millis(Utc::now().timestamp_millis()),
+            message: None,
+        }],
+        member: None,
+        area: None,
+        holiday: payload.holiday,
+    };
+    match project.save().await {
+        Ok(project_id) => {
+            let mut project_role: ProjectRole = ProjectRole {
+                _id: None,
+                name: "Owner".to_string(),
+                permission: vec![ProjectRolePermission::Owner],
+                project_id,
+            };
 
-                match project_role.save().await {
-                    Ok(role_id) => {
-                        let member: ProjectMember = ProjectMember {
-                            _id: issuer._id.unwrap(),
-                            role_id: vec![role_id],
-                            kind: ProjectMemberKind::Indirect,
-                            name: None,
-                        };
+            match project_role.save().await {
+                Ok(role_id) => {
+                    let member: ProjectMember = ProjectMember {
+                        _id: issuer._id.unwrap(),
+                        role_id: vec![role_id],
+                        kind: ProjectMemberKind::Indirect,
+                        name: None,
+                    };
 
-                        match project.add_member(&vec![member]).await {
-                            Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
-                            Err(error) => {
-                                Project::delete_by_id(&project_id)
-                                    .await
-                                    .expect("PROJECT_DELETION_FAILED");
-                                ProjectRole::delete_by_id(&role_id)
-                                    .await
-                                    .expect("PROJECT_ROLE_DELETION_FAILED");
-                                HttpResponse::InternalServerError().body(error)
-                            }
+                    match project.add_member(&vec![member]).await {
+                        Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
+                        Err(error) => {
+                            Project::delete_by_id(&project_id)
+                                .await
+                                .expect("PROJECT_DELETION_FAILED");
+                            ProjectRole::delete_by_id(&role_id)
+                                .await
+                                .expect("PROJECT_ROLE_DELETION_FAILED");
+                            HttpResponse::InternalServerError().body(error)
                         }
                     }
-                    Err(error) => {
-                        Project::delete_by_id(&project_id)
-                            .await
-                            .expect("PROJECT_DELETION_FAILED");
-                        HttpResponse::InternalServerError().body(error)
-                    }
                 }
-                // @TODO: Add preset!
+                Err(error) => {
+                    Project::delete_by_id(&project_id)
+                        .await
+                        .expect("PROJECT_DELETION_FAILED");
+                    HttpResponse::InternalServerError().body(error)
+                }
             }
-            Err(error) => HttpResponse::InternalServerError().body(error),
+            // @TODO: Add preset!
         }
-    } else {
-        HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string())
+        Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
 #[post("/projects/{project_id}/roles")] // FINISHED
@@ -523,25 +524,10 @@ pub async fn update_project_report(
     form: MultipartForm<ProjectProgressReportDocumentationRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
-    // let mut project_id: ObjectId = ObjectId::new();
-    // let mut report_id: ObjectId = ObjectId::new();
-    // let _id: (String, String) = _id.into_inner();
-
     let (project_id, report_id) = match (_id.0.parse(), _id.1.parse()) {
         (Ok(project_id), Ok(report_id)) => (project_id, report_id),
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
     };
-
-    // if let Ok(_id) = ObjectId::from_str(&_id.0) {
-    //     project_id = _id;
-    // } else {
-    //     HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    // }
-    // if let Ok(_id) = ObjectId::from_str(&_id.1) {
-    //     report_id = _id;
-    // } else {
-    //     HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    // }
 
     let issuer_id = match req.extensions().get::<UserAuthentication>() {
         Some(issuer) => issuer._id.unwrap().clone(),

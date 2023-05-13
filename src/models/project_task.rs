@@ -228,7 +228,6 @@ impl ProjectTask {
                     finished_parent_task = None
                 }
             } else {
-                println!("{:#?}", self);
                 let tasks = Self::find_many(&ProjectTaskQuery {
                     _id: None,
                     project_id: None,

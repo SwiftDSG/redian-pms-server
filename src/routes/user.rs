@@ -1,11 +1,11 @@
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse};
-use mongodb::bson::oid::ObjectId;
+use mongodb::bson::{doc, oid::ObjectId, to_bson};
 use regex::Regex;
 use std::str::FromStr;
 
 use crate::models::{
     role::{Role, RolePermission},
-    user::{User, UserAuthentication, UserCredential, UserQuery, UserRequest},
+    user::{User, UserAuthentication, UserCredential, UserQuery, UserRefresh, UserRequest},
 };
 
 #[get("/users")]
@@ -65,17 +65,27 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
     .await)
         .is_ok()
     {
-        let issuer_role: Vec<ObjectId>;
-        if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
-            issuer_role = issuer.role.clone();
-        } else {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
+        let issuer_role = match req.extensions().get::<UserAuthentication>() {
+            Some(issuer) => issuer.role.clone(),
+            None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+        };
         if issuer_role.is_empty()
             || !Role::validate(&issuer_role, &RolePermission::CreateUser).await
         {
             return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
         }
+
+        // let issuer_role: Vec<ObjectId>;
+        // if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
+        //     issuer_role = issuer.role.clone();
+        // } else {
+        //     return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+        // }
+        // if issuer_role.is_empty()
+        //     || !Role::validate(&issuer_role, &RolePermission::CreateUser).await
+        // {
+        //     return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+        // }
 
         if let Some(roles) = payload.role {
             for i in roles.iter() {
@@ -117,7 +127,22 @@ pub async fn login(payload: web::Json<UserCredential>) -> HttpResponse {
     let payload: UserCredential = payload.into_inner();
 
     match payload.authenticate().await {
-        Ok(token) => HttpResponse::Ok().body(token),
+        Ok((atk, rtk)) => HttpResponse::Ok().json(doc! {
+            "atk": to_bson::<String>(&atk).unwrap(),
+            "rtk": to_bson::<String>(&rtk).unwrap()
+        }),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
+#[post("/users/refresh")]
+pub async fn refresh(payload: web::Json<UserRefresh>) -> HttpResponse {
+    let payload: UserRefresh = payload.into_inner();
+
+    match UserCredential::refresh(&payload.rtk).await {
+        Ok((atk, rtk)) => HttpResponse::Ok().json(doc! {
+            "atk": to_bson::<String>(&atk).unwrap(),
+            "rtk": to_bson::<String>(&rtk).unwrap()
+        }),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }

@@ -10,7 +10,9 @@ use futures::{
     stream::StreamExt,
     FutureExt,
 };
-use jsonwebtoken::{self, decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{
+    self, decode, encode, Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation,
+};
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_bson},
     Collection, Database,
@@ -22,7 +24,7 @@ use std::{collections::BTreeMap, fs::read_to_string, rc::Rc, str::FromStr};
 static mut KEYS: BTreeMap<String, String> = BTreeMap::new();
 
 #[derive(Debug, Serialize, Deserialize)]
-struct UserClaims {
+struct UserClaim {
     aud: String,
     exp: i64,
     iss: String,
@@ -38,10 +40,14 @@ pub struct User {
     pub password: String,
     pub role: Vec<ObjectId>,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct UserCredential {
     pub email: String,
     pub password: String,
+}
+#[derive(Debug, Deserialize)]
+pub struct UserRefresh {
+    pub rtk: String,
 }
 #[derive(Debug)]
 pub struct UserQuery {
@@ -150,51 +156,113 @@ impl User {
 }
 
 impl UserCredential {
-    pub async fn authenticate(&self) -> Result<String, String> {
-        if let Ok(Some(user)) = User::find_by_email(&self.email).await {
-            if bcrypt::verify(self.password.clone(), &user.password) {
-                let claims: UserClaims = UserClaims {
-                    sub: ObjectId::to_string(&user._id.unwrap()),
-                    exp: Utc::now().timestamp() + 86400,
-                    iss: "Redian".to_string(),
-                    aud: "http://localhost:8000".to_string(),
-                };
+    pub async fn authenticate(&self) -> Result<(String, String), String> {
+        let user = User::find_by_email(&self.email)
+            .await?
+            .ok_or_else(|| "INVALID_COMBINATION".to_string())?;
+        if !bcrypt::verify(self.password.clone(), &user.password) {
+            return Err("INVALID_COMBINATION".to_string());
+        }
 
-                let header: Header = Header::new(Algorithm::RS256);
-                unsafe {
-                    if let Ok(token) = encode(
-                        &header,
-                        &claims,
-                        &EncodingKey::from_rsa_pem(KEYS.get("private_access").unwrap().as_bytes())
-                            .unwrap(),
-                    ) {
-                        Ok(token)
-                    } else {
-                        Err("GENERATING_FAILED".to_string())
-                    }
-                }
-            } else {
-                Err("INVALID_COMBINATION".to_string())
+        let claim_access: UserClaim = UserClaim {
+            sub: ObjectId::to_string(&user._id.unwrap()),
+            exp: Utc::now().timestamp() + 1800,
+            iss: "Redian".to_string(),
+            aud: std::env::var("BASE_URL").unwrap().to_string(),
+        };
+        let claim_refresh: UserClaim = UserClaim {
+            sub: ObjectId::to_string(&user._id.unwrap()),
+            exp: Utc::now().timestamp() + 259200,
+            iss: "Redian".to_string(),
+            aud: std::env::var("BASE_URL").unwrap().to_string(),
+        };
+
+        let header: Header = Header::new(Algorithm::RS256);
+        unsafe {
+            match (
+                encode(
+                    &header,
+                    &claim_access,
+                    &EncodingKey::from_rsa_pem(KEYS.get("private_access").unwrap().as_bytes())
+                        .unwrap(),
+                ),
+                encode(
+                    &header,
+                    &claim_refresh,
+                    &EncodingKey::from_rsa_pem(KEYS.get("private_refresh").unwrap().as_bytes())
+                        .unwrap(),
+                ),
+            ) {
+                (Ok(atk), Ok(rtk)) => Ok((atk, rtk)),
+                _ => Err("GENERATING_FAILED".to_string()),
             }
-        } else {
-            Err("INVALID_COMBINATION".to_string())
+        }
+    }
+    pub async fn refresh(token: &str) -> Result<(String, String), String> {
+        let validation: Validation = Validation::new(Algorithm::RS256);
+        let data: TokenData<UserClaim>;
+
+        unsafe {
+            data = decode::<UserClaim>(
+                token,
+                &DecodingKey::from_rsa_pem(KEYS.get("public_refresh").unwrap().as_bytes()).unwrap(),
+                &validation,
+            )
+            .map_err(|_| "INVALID_TOKEN")?;
+        }
+        let _id = ObjectId::from_str(&data.claims.sub).map_err(|_| "INVALID_ID".to_string())?;
+
+        let user = User::find_by_id(&_id)
+            .await?
+            .ok_or_else(|| "USER_NOT_FOUDN".to_string())?;
+
+        let claim_access: UserClaim = UserClaim {
+            sub: ObjectId::to_string(&user._id.unwrap()),
+            exp: Utc::now().timestamp() + 1800,
+            iss: "Redian".to_string(),
+            aud: std::env::var("BASE_URL").unwrap().to_string(),
+        };
+        let claim_refresh: UserClaim = UserClaim {
+            sub: ObjectId::to_string(&user._id.unwrap()),
+            exp: Utc::now().timestamp() + 259200,
+            iss: "Redian".to_string(),
+            aud: std::env::var("BASE_URL").unwrap().to_string(),
+        };
+
+        let header: Header = Header::new(Algorithm::RS256);
+        unsafe {
+            match (
+                encode(
+                    &header,
+                    &claim_access,
+                    &EncodingKey::from_rsa_pem(KEYS.get("private_access").unwrap().as_bytes())
+                        .unwrap(),
+                ),
+                encode(
+                    &header,
+                    &claim_refresh,
+                    &EncodingKey::from_rsa_pem(KEYS.get("private_refresh").unwrap().as_bytes())
+                        .unwrap(),
+                ),
+            ) {
+                (Ok(atk), Ok(rtk)) => Ok((atk, rtk)),
+                _ => Err("GENERATING_FAILED".to_string()),
+            }
         }
     }
     pub fn verify(token: &str) -> Option<ObjectId> {
         let validation: Validation = Validation::new(Algorithm::RS256);
         unsafe {
-            if let Ok(data) = decode::<UserClaims>(
+            match decode::<UserClaim>(
                 token,
                 &DecodingKey::from_rsa_pem(KEYS.get("public_access").unwrap().as_bytes()).unwrap(),
                 &validation,
             ) {
-                if let Ok(_id) = ObjectId::from_str(&data.claims.sub) {
-                    Some(_id)
-                } else {
-                    None
-                }
-            } else {
-                None
+                Ok(data) => match ObjectId::from_str(&data.claims.sub) {
+                    Ok(id) => Some(id),
+                    Err(_) => None,
+                },
+                Err(_) => None,
             }
         }
     }
@@ -264,8 +332,14 @@ pub fn load_keys() {
         read_to_string("./keys/private_access.key").expect("LOAD_FAILED_PRIVATE_ACCESS");
     let public_access_file =
         read_to_string("./keys/public_access.pem").expect("LOAD_FAILED_PUBLIC_ACCESS");
+    let private_refresh_file =
+        read_to_string("./keys/private_refresh.key").expect("LOAD_FAILED_PRIVATE_ACCESS");
+    let public_refresh_file =
+        read_to_string("./keys/public_refresh.pem").expect("LOAD_FAILED_PUBLIC_ACCESS");
     unsafe {
         KEYS.insert("private_access".to_string(), private_access_file);
         KEYS.insert("public_access".to_string(), public_access_file);
+        KEYS.insert("private_refresh".to_string(), private_refresh_file);
+        KEYS.insert("public_refresh".to_string(), public_refresh_file);
     }
 }

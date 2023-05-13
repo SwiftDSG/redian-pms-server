@@ -5,3 +5,4 @@
 /tests/report.html
 /files
 .vscode
+.env

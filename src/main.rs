@@ -1,17 +1,44 @@
 use actix_web::{App, HttpServer};
-use std::io;
+use std::{fs::read_to_string, io};
 
 mod database;
 mod models;
 mod routes;
 
+fn load_env() {
+    if let Ok(env) = read_to_string(".env") {
+        let lines: Vec<(&str, &str)> = env
+            .lines()
+            .map(|a| {
+                let b: Vec<&str> = a.split("=").collect();
+                (
+                    b.get(0).expect("INVALID_ENVIRONMENT_VARIABLES").clone(),
+                    b.get(1).expect("INVALID_ENVIRONMENT_VARIABLES").clone(),
+                )
+            })
+            .collect();
+
+        for (key, value) in lines {
+            std::env::set_var(key.to_string(), value.to_string());
+        }
+    }
+
+    if std::env::var("DATABASE_URI").is_err() {
+        std::env::set_var("DATABASE_URI", "mongodb://localhost:27017".to_string());
+    }
+    if std::env::var("CLIENT_URL").is_err() {
+        std::env::set_var("CLIENT_URL", "http://localhost:3000".to_string());
+    }
+    if std::env::var("BASE_URL").is_err() {
+        std::env::set_var("BASE_URL", "http://localhost:8000".to_string());
+    }
+}
+
 #[actix_web::main]
 async fn main() -> io::Result<()> {
-    let port: u16 = 8000;
-    let db_uri: String =
-        std::env::var("MONGODB_URI").unwrap_or_else(|_| String::from("mongodb://localhost:27017"));
+    load_env();
 
-    database::connect(db_uri).await;
+    database::connect(std::env::var("DATABASE_URI").unwrap()).await;
     models::user::load_keys();
 
     HttpServer::new(move || {
@@ -21,6 +48,7 @@ async fn main() -> io::Result<()> {
             .service(routes::user::get_user)
             .service(routes::user::create_user)
             .service(routes::user::login)
+            .service(routes::user::refresh)
             .service(routes::role::create_role)
             .service(routes::customer::get_customers)
             .service(routes::customer::get_customer)
@@ -40,7 +68,7 @@ async fn main() -> io::Result<()> {
             .service(routes::project::add_project_member)
             .service(routes::project::add_project_area)
     })
-    .bind(("127.0.0.1", port))?
+    .bind(("127.0.0.1", 8000))?
     .workers(8)
     .run()
     .await
