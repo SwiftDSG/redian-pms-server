@@ -15,7 +15,6 @@ use std::{
     ffi::OsStr,
     fs::{create_dir_all, remove_dir_all, rename},
     path::{Path, PathBuf},
-    str::FromStr,
     vec,
 };
 
@@ -28,6 +27,9 @@ use crate::models::{
     project::{
         Project, ProjectAreaRequest, ProjectMember, ProjectMemberKind, ProjectRequest,
         ProjectStatus, ProjectStatusKind,
+    },
+    project_incident_report::{
+        ProjectIncidentReport, ProjectIncidentReportRequest, ProjectIncidentReportRequestQuery,
     },
     project_progress_report::{
         ProjectProgressReport, ProjectProgressReportDocumentationRequest,
@@ -54,19 +56,7 @@ use crate::models::{
 //         Err(error) => HttpResponse::BadRequest().body(error),
 //     }
 // }
-#[get("/projects/{_id}")]
-pub async fn get_project(_id: web::Path<String>) -> HttpResponse {
-    let _id: String = _id.into_inner();
-    if let Ok(_id) = ObjectId::from_str(&_id) {
-        return match Project::find_by_id(&_id).await {
-            Ok(Some(project)) => HttpResponse::Ok().json(project),
-            Ok(None) => HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string()),
-            Err(error) => HttpResponse::InternalServerError().body(error),
-        };
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string())
-    }
-}
+
 // #[delete("/projects/{_id}")]
 // pub async fn delete_project(_id: web::Path<String>) -> HttpResponse {
 //     let _id: String = _id.into_inner();
@@ -79,6 +69,20 @@ pub async fn get_project(_id: web::Path<String>) -> HttpResponse {
 //         HttpResponse::BadRequest().body("INVALID_ID".to_string())
 //     }
 // }
+
+#[get("/projects/{project_id}")]
+pub async fn get_project(project_id: web::Path<String>) -> HttpResponse {
+    let project_id = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    match Project::find_by_id(&project_id).await {
+        Ok(Some(project)) => HttpResponse::Ok().json(project),
+        Ok(None) => HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
 #[post("/projects")] // FINISHED
 pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest) -> HttpResponse {
     let issuer = match req.extensions().get::<UserAuthentication>() {
@@ -124,7 +128,7 @@ pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest
                         name: None,
                     };
 
-                    match project.add_member(&vec![member]).await {
+                    match project.add_member(&[member]).await {
                         Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
                         Err(error) => {
                             Project::delete_by_id(&project_id)
@@ -155,90 +159,81 @@ pub async fn create_project_role(
     payload: web::Json<ProjectRoleRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        let project_id = project_id.into_inner();
-        if let Ok(project_id) = ObjectId::from_str(&project_id) {
-            if !ProjectRole::validate(
-                &project_id,
-                &issuer._id.unwrap(),
-                &ProjectRolePermission::CreateRole,
-            )
-            .await
-            {
-                return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-            }
+    let project_id = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-            let payload: ProjectRoleRequest = payload.into_inner();
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateRole).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
 
-            let mut project_role: ProjectRole = ProjectRole {
-                _id: None,
-                project_id,
-                name: payload.name,
-                permission: payload.permission,
-            };
+    let payload: ProjectRoleRequest = payload.into_inner();
 
-            match project_role.save().await {
-                Ok(role_id) => HttpResponse::Ok().body(role_id.to_string()),
-                Err(error) => HttpResponse::InternalServerError().body(error),
-            }
-        } else {
-            HttpResponse::BadRequest().body("INVALID_ID".to_string())
-        }
-    } else {
-        HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string())
+    let mut project_role: ProjectRole = ProjectRole {
+        _id: None,
+        project_id,
+        name: payload.name,
+        permission: payload.permission,
+    };
+
+    match project_role.save().await {
+        Ok(role_id) => HttpResponse::Ok().body(role_id.to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
+
 #[post("/projects/{project_id}/tasks")] // FINISHED
 pub async fn create_project_task(
     project_id: web::Path<String>,
     payload: web::Json<ProjectTaskRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
-    let project_id: String = project_id.into_inner();
-    if let Ok(project_id) = ObjectId::from_str(&project_id) {
-        let issuer_id: ObjectId;
-        if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-            issuer_id = issuer._id.unwrap().clone();
-        } else {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
-        if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await
-        {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
+    let project_id = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-        let payload: ProjectTaskRequest = payload.into_inner();
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+    let payload: ProjectTaskRequest = payload.into_inner();
 
-        let mut project_task: ProjectTask = ProjectTask {
-            _id: None,
-            project_id,
-            area_id: ObjectId::new(),
-            task_id: None,
-            user_id: payload.user_id,
-            name: payload.name,
-            volume: payload.volume,
-            value: payload.value,
-            description: payload.description,
-            period: None,
-            status: vec![ProjectTaskStatus {
-                kind: ProjectTaskStatusKind::Pending,
-                time: DateTime::from_millis(Utc::now().timestamp_millis()),
-                message: None,
-            }],
-        };
+    let mut project_task: ProjectTask = ProjectTask {
+        _id: None,
+        project_id,
+        area_id: ObjectId::new(),
+        task_id: None,
+        user_id: payload.user_id,
+        name: payload.name,
+        volume: payload.volume,
+        value: payload.value,
+        description: payload.description,
+        period: None,
+        status: vec![ProjectTaskStatus {
+            kind: ProjectTaskStatusKind::Pending,
+            time: DateTime::from_millis(Utc::now().timestamp_millis()),
+            message: None,
+        }],
+    };
 
-        if let Some(area_id) = payload.area_id {
-            project_task.area_id = area_id
-        } else {
-            return HttpResponse::BadRequest().body("PROJECT_TASK_MUST_HAVE_AREA_ID".to_string());
-        }
-
-        match project_task.save().await {
-            Ok(task_id) => HttpResponse::Ok().body(task_id.to_string()),
-            Err(error) => HttpResponse::InternalServerError().body(error),
-        }
+    if let Some(area_id) = payload.area_id {
+        project_task.area_id = area_id
     } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string())
+        return HttpResponse::BadRequest().body("PROJECT_TASK_MUST_HAVE_AREA_ID".to_string());
+    }
+
+    match project_task.save().await {
+        Ok(task_id) => HttpResponse::Ok().body(task_id.to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
 #[post("/projects/{project_id}/tasks/{task_id}")] // FINISHED
@@ -247,27 +242,15 @@ pub async fn create_project_task_sub(
     payload: web::Json<Vec<ProjectTaskRequest>>,
     req: HttpRequest,
 ) -> HttpResponse {
-    let mut project_id: ObjectId = ObjectId::new();
-    let mut task_id: ObjectId = ObjectId::new();
-    let _id: (String, String) = _id.into_inner();
+    let (project_id, task_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(task_id)) => (project_id, task_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-    if let Ok(_id) = ObjectId::from_str(&_id.0) {
-        project_id = _id;
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    }
-    if let Ok(_id) = ObjectId::from_str(&_id.1) {
-        task_id = _id;
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    }
-
-    let issuer_id: ObjectId;
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        issuer_id = issuer._id.unwrap().clone();
-    } else {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-    }
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
     if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
@@ -338,38 +321,83 @@ pub async fn create_project_report(
     payload: web::Json<ProjectProgressReportRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
-    let project_id: String = project_id.into_inner();
-    if let Ok(project_id) = ObjectId::from_str(&project_id) {
-        let issuer_id: ObjectId;
-        if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-            issuer_id = issuer._id.unwrap().clone();
-        } else {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
-        if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await
-        {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
+    let project_id = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-        let payload: ProjectProgressReportRequest = payload.into_inner();
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(
+        &project_id,
+        &issuer_id,
+        &ProjectRolePermission::CreateReport,
+    )
+    .await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
 
-        let mut project_report = ProjectProgressReport {
-            _id: None,
-            project_id,
-            date: DateTime::from_millis(Utc::now().timestamp_millis()),
-            time: payload.time,
-            actual: payload.actual,
-            plan: payload.plan,
-            documentation: payload.documentation,
-            weather: payload.weather,
-        };
+    let payload: ProjectProgressReportRequest = payload.into_inner();
 
-        match project_report.save().await {
-            Ok(report_id) => HttpResponse::Ok().body(report_id.to_string()),
-            Err(error) => HttpResponse::InternalServerError().body(error),
-        }
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string())
+    let mut project_report = ProjectProgressReport {
+        _id: None,
+        project_id,
+        date: DateTime::from_millis(Utc::now().timestamp_millis()),
+        time: payload.time,
+        actual: payload.actual,
+        plan: payload.plan,
+        documentation: payload.documentation,
+        weather: payload.weather,
+    };
+
+    match project_report.save().await {
+        Ok(report_id) => HttpResponse::Ok().body(report_id.to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
+
+#[post("/projects/{project_id}/incidents")]
+pub async fn create_project_incident(
+    project_id: web::Path<String>,
+    payload: web::Json<ProjectIncidentReportRequest>,
+    query: web::Query<ProjectIncidentReportRequestQuery>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let project_id = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(
+        &project_id,
+        &issuer_id,
+        &ProjectRolePermission::CreateIncident,
+    )
+    .await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    let payload: ProjectIncidentReportRequest = payload.into_inner();
+
+    let mut project_incident = ProjectIncidentReport {
+        _id: None,
+        project_id,
+        user_id: payload.user_id,
+        kind: payload.kind,
+        date: DateTime::from_millis(Utc::now().timestamp_millis()),
+    };
+
+    match project_incident.save(query.breakdown).await {
+        Ok(incident_id) => HttpResponse::Ok().body(incident_id.to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
 
@@ -379,28 +407,16 @@ pub async fn update_project_task(
     payload: web::Json<ProjectTaskRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
-    let mut project_id: ObjectId = ObjectId::new();
-    let mut task_id: ObjectId = ObjectId::new();
-    let _id: (String, String) = _id.into_inner();
+    let (project_id, task_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(task_id)) => (project_id, task_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-    if let Ok(_id) = ObjectId::from_str(&_id.0) {
-        project_id = _id;
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    }
-    if let Ok(_id) = ObjectId::from_str(&_id.1) {
-        task_id = _id;
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    }
-
-    let issuer_id: ObjectId;
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        issuer_id = issuer._id.unwrap().clone();
-    } else {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-    }
-    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::UpdateTask).await {
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
 
@@ -435,28 +451,16 @@ pub async fn update_project_task_status(
     payload: web::Json<ProjectTaskStatusRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
-    let mut project_id: ObjectId = ObjectId::new();
-    let mut task_id: ObjectId = ObjectId::new();
-    let _id: (String, String) = _id.into_inner();
+    let (project_id, task_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(task_id)) => (project_id, task_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-    if let Ok(_id) = ObjectId::from_str(&_id.0) {
-        project_id = _id;
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    }
-    if let Ok(_id) = ObjectId::from_str(&_id.1) {
-        task_id = _id;
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    }
-
-    let issuer_id: ObjectId;
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        issuer_id = issuer._id.unwrap().clone();
-    } else {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-    }
-    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::UpdateTask).await {
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
 
@@ -477,28 +481,16 @@ pub async fn update_project_task_period(
     payload: web::Json<ProjectTaskPeriodRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
-    let mut project_id: ObjectId = ObjectId::new();
-    let mut task_id: ObjectId = ObjectId::new();
-    let _id: (String, String) = _id.into_inner();
+    let (project_id, task_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(task_id)) => (project_id, task_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-    if let Ok(_id) = ObjectId::from_str(&_id.0) {
-        project_id = _id;
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    }
-    if let Ok(_id) = ObjectId::from_str(&_id.1) {
-        task_id = _id;
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string());
-    }
-
-    let issuer_id: ObjectId;
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        issuer_id = issuer._id.unwrap().clone();
-    } else {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-    }
-    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::UpdateTask).await {
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
 
@@ -530,7 +522,7 @@ pub async fn update_project_report(
     };
 
     let issuer_id = match req.extensions().get::<UserAuthentication>() {
-        Some(issuer) => issuer._id.unwrap().clone(),
+        Some(issuer) => issuer._id.unwrap(),
         None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
     };
     if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::UpdateTask).await {
@@ -542,7 +534,7 @@ pub async fn update_project_report(
         _ => return HttpResponse::NotFound().body("PROJECT_REPORT_NOT_FOUND".to_string()),
     };
 
-    let save_dir = format!("./files/reports/documentation/{}/", report_id.to_string());
+    let save_dir = format!("./files/reports/documentation/{}/", report_id);
 
     if create_dir_all(&save_dir).is_err() {
         return HttpResponse::InternalServerError().body("DIRECTORY_CREATION_FAILED".to_string());
@@ -621,73 +613,61 @@ pub async fn update_project_report(
 }
 #[patch("/projects/{project_id}/members")]
 pub async fn add_project_member(
-    _id: web::Path<String>,
+    project_id: web::Path<String>,
     payload: web::Json<ProjectMember>,
     req: HttpRequest,
 ) -> HttpResponse {
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        let _id: String = _id.into_inner();
-        if let Ok(_id) = ObjectId::from_str(&_id) {
-            if !ProjectRole::validate(
-                &_id,
-                &issuer._id.unwrap(),
-                &ProjectRolePermission::CreateRole,
-            )
-            .await
-            {
-                return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-            }
+    let project_id = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-            if let Ok(Some(mut project)) = Project::find_by_id(&_id).await {
-                let payload: ProjectMember = payload.into_inner();
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateRole).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
 
-                match project.add_member(&vec![payload]).await {
-                    Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
-                    Err(error) => HttpResponse::InternalServerError().body(error),
-                }
-            } else {
-                HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
-            }
-        } else {
-            HttpResponse::BadRequest().body("INVALID_ID".to_string())
+    if let Ok(Some(mut project)) = Project::find_by_id(&project_id).await {
+        let payload: ProjectMember = payload.into_inner();
+
+        match project.add_member(&[payload]).await {
+            Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
+            Err(error) => HttpResponse::InternalServerError().body(error),
         }
     } else {
-        HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string())
+        HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
     }
 }
 #[patch("/projects/{project_id}/areas")] // FINISHED
 pub async fn add_project_area(
-    _id: web::Path<String>,
+    project_id: web::Path<String>,
     payload: web::Json<ProjectAreaRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        let _id: String = _id.into_inner();
-        if let Ok(_id) = ObjectId::from_str(&_id) {
-            if !ProjectRole::validate(
-                &_id,
-                &issuer._id.unwrap(),
-                &ProjectRolePermission::CreateRole,
-            )
-            .await
-            {
-                return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-            }
+    let project_id = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
 
-            if let Ok(Some(mut project)) = Project::find_by_id(&_id).await {
-                let payload: ProjectAreaRequest = payload.into_inner();
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateRole).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
 
-                match project.add_area(&vec![payload]).await {
-                    Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
-                    Err(error) => HttpResponse::InternalServerError().body(error),
-                }
-            } else {
-                HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
-            }
-        } else {
-            HttpResponse::BadRequest().body("INVALID_ID".to_string())
+    if let Ok(Some(mut project)) = Project::find_by_id(&project_id).await {
+        let payload: ProjectAreaRequest = payload.into_inner();
+
+        match project.add_area(&[payload]).await {
+            Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
+            Err(error) => HttpResponse::InternalServerError().body(error),
         }
     } else {
-        HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string())
+        HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
     }
 }

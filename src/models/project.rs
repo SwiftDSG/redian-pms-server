@@ -95,7 +95,7 @@ impl Project {
             Err("CUSTOMER_NOT_FOUND".to_string())
         }
     }
-    pub async fn add_member(&mut self, members: &Vec<ProjectMember>) -> Result<ObjectId, String> {
+    pub async fn add_member(&mut self, members: &[ProjectMember]) -> Result<ObjectId, String> {
         let db: Database = get_db();
         let collection: Collection<Project> = db.collection::<Project>("projects");
 
@@ -131,7 +131,7 @@ impl Project {
             .map_err(|_| "UPDATE_FAILED".to_string())
             .map(|_| self._id.unwrap())
     }
-    pub async fn add_area(&mut self, areas: &Vec<ProjectAreaRequest>) -> Result<ObjectId, String> {
+    pub async fn add_area(&mut self, areas: &[ProjectAreaRequest]) -> Result<ObjectId, String> {
         let db: Database = get_db();
         let collection: Collection<Project> = db.collection::<Project>("projects");
 

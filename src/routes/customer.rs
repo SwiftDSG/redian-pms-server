@@ -1,6 +1,4 @@
 use actix_web::{delete, get, post, put, web, HttpMessage, HttpRequest, HttpResponse};
-use mongodb::bson::oid::ObjectId;
-use std::str::FromStr;
 
 use crate::models::{
     customer::{Customer, CustomerQuery, CustomerRequest},
@@ -21,17 +19,17 @@ pub async fn get_customers() -> HttpResponse {
         Err(error) => HttpResponse::BadRequest().body(error),
     }
 }
-#[get("/customers/{_id}")]
-pub async fn get_customer(_id: web::Path<String>) -> HttpResponse {
-    let _id: String = _id.into_inner();
-    if let Ok(_id) = ObjectId::from_str(&_id) {
-        return match Customer::find_by_id(&_id).await {
-            Ok(Some(customer)) => HttpResponse::Ok().json(customer),
-            Ok(None) => HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string()),
-            Err(error) => HttpResponse::InternalServerError().body(error),
-        };
-    } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string())
+#[get("/customers/{customer_id}")]
+pub async fn get_customer(customer_id: web::Path<String>) -> HttpResponse {
+    let customer_id = match customer_id.parse() {
+        Ok(customer_id) => customer_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    match Customer::find_by_id(&customer_id).await {
+        Ok(Some(customer)) => HttpResponse::Ok().json(customer),
+        Ok(None) => HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
 #[post("/customers")]
@@ -39,6 +37,16 @@ pub async fn create_customer(
     payload: web::Json<CustomerRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
+    let issuer_role = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer.role.clone(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if issuer_role.is_empty()
+        || !Role::validate(&issuer_role, &RolePermission::CreateCustomer).await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
     let payload: CustomerRequest = payload.into_inner();
     let mut customer: Customer = Customer {
         _id: None,
@@ -46,85 +54,68 @@ pub async fn create_customer(
         contact: payload.contact,
         person: payload.person,
     };
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
-        if !Role::validate(&issuer.role, &RolePermission::CreateCustomer).await {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
-        match customer.save().await {
-            Ok(id) => HttpResponse::Created().body(id.to_string()),
-            Err(error) => HttpResponse::InternalServerError().body(error),
-        }
-    } else {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    match customer.save().await {
+        Ok(id) => HttpResponse::Created().body(id.to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
     }
-    // if let Some(roles) = payload.role {
-    //     for i in roles.iter() {
-    //         if let Ok(_id) = ObjectId::from_str(i) {
-    //             if let Ok(Some(_)) = Role::find_by_id(&_id).await {
-    //                 user.role.push(_id);
-    //             }
-    //         }
-    //     }
-    // } else {
-    //     return HttpResponse::BadRequest().body("USER_MUST_HAVE_ROLES".to_string());
-    // }
-
-    // match customer.save().await {
-    //     Ok(id) => HttpResponse::Created().body(id.to_string()),
-    //     Err(error) => HttpResponse::InternalServerError().body(error),
-    // }
 }
-#[put("/customers/{_id}")]
+#[put("/customers/{customer_id}")]
 pub async fn update_customer(
-    _id: web::Path<String>,
+    customer_id: web::Path<String>,
     payload: web::Json<Customer>,
     req: HttpRequest,
 ) -> HttpResponse {
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        if !Role::validate(&issuer.role, &RolePermission::UpdateCustomer).await {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
-        let _id: String = _id.into_inner();
-        if let Ok(_id) = ObjectId::from_str(&_id) {
-            if let Ok(Some(_)) = Customer::find_by_id(&_id).await {
-                let payload: Customer = payload.into_inner();
-                let mut customer: Customer = Customer {
-                    _id: payload._id,
-                    name: payload.name,
-                    contact: payload.contact,
-                    person: payload.person,
-                };
-                return match customer.update_customer().await {
-                    Ok(customer_id) => HttpResponse::Ok().body(customer_id.to_string()),
-                    Err(error) => HttpResponse::InternalServerError().body(error),
-                };
-            } else {
-                HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string())
-            }
-        } else {
-            HttpResponse::BadRequest().body("INVALID_ID".to_string())
-        }
+    let issuer_role = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer.role.clone(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if issuer_role.is_empty()
+        || !Role::validate(&issuer_role, &RolePermission::UpdateCustomer).await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    let customer_id = match customer_id.parse() {
+        Ok(customer_id) => customer_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    if let Ok(Some(_)) = Customer::find_by_id(&customer_id).await {
+        let payload: Customer = payload.into_inner();
+        let mut customer: Customer = Customer {
+            _id: Some(customer_id),
+            name: payload.name,
+            contact: payload.contact,
+            person: payload.person,
+        };
+        return match customer.update_customer().await {
+            Ok(customer_id) => HttpResponse::Ok().body(customer_id.to_string()),
+            Err(error) => HttpResponse::InternalServerError().body(error),
+        };
     } else {
-        HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string())
+        HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string())
     }
 }
-#[delete("/customers/{_id}")]
-pub async fn delete_customer(_id: web::Path<String>, req: HttpRequest) -> HttpResponse {
-    let _id: String = _id.into_inner();
-    if let Some(issuer) = req.extensions().get::<UserAuthentication>() {
-        if !Role::validate(&issuer.role, &RolePermission::UpdateCustomer).await {
-            return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        }
-        if let Ok(_id) = ObjectId::from_str(&_id) {
-            return match Customer::delete_customer(&_id).await {
-                Ok(count) => HttpResponse::Ok().body(format!("Deleted {count} customer")),
-                Err(error) => HttpResponse::InternalServerError().body(error),
-            };
-        } else {
-            HttpResponse::BadRequest().body("INVALID_ID".to_string())
-        }
-    } else {
-        HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string())
+#[delete("/customers/{customer_id}")]
+pub async fn delete_customer(customer_id: web::Path<String>, req: HttpRequest) -> HttpResponse {
+    let issuer_role = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer.role.clone(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if issuer_role.is_empty()
+        || !Role::validate(&issuer_role, &RolePermission::DeleteCustomer).await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
+
+    let customer_id = match customer_id.parse() {
+        Ok(customer_id) => customer_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    return match Customer::delete_customer(&customer_id).await {
+        Ok(count) => HttpResponse::Ok().body(format!("Deleted {count} customer")),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    };
 }
 //+validasi get 1 per 1, update, delete,

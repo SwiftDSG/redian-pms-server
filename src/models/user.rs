@@ -168,13 +168,13 @@ impl UserCredential {
             sub: ObjectId::to_string(&user._id.unwrap()),
             exp: Utc::now().timestamp() + 1800,
             iss: "Redian".to_string(),
-            aud: std::env::var("BASE_URL").unwrap().to_string(),
+            aud: std::env::var("BASE_URL").unwrap(),
         };
         let claim_refresh: UserClaim = UserClaim {
             sub: ObjectId::to_string(&user._id.unwrap()),
             exp: Utc::now().timestamp() + 259200,
             iss: "Redian".to_string(),
-            aud: std::env::var("BASE_URL").unwrap().to_string(),
+            aud: std::env::var("BASE_URL").unwrap(),
         };
 
         let header: Header = Header::new(Algorithm::RS256);
@@ -220,13 +220,13 @@ impl UserCredential {
             sub: ObjectId::to_string(&user._id.unwrap()),
             exp: Utc::now().timestamp() + 1800,
             iss: "Redian".to_string(),
-            aud: std::env::var("BASE_URL").unwrap().to_string(),
+            aud: std::env::var("BASE_URL").unwrap(),
         };
         let claim_refresh: UserClaim = UserClaim {
             sub: ObjectId::to_string(&user._id.unwrap()),
             exp: Utc::now().timestamp() + 259200,
             iss: "Redian".to_string(),
-            aud: std::env::var("BASE_URL").unwrap().to_string(),
+            aud: std::env::var("BASE_URL").unwrap(),
         };
 
         let header: Header = Header::new(Algorithm::RS256);

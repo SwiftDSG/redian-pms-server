@@ -20,6 +20,8 @@ pub enum ProjectRolePermission {
     UpdateTask,
     GetTasks,
     GetTask,
+    CreateReport,
+    CreateIncident,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -42,14 +44,14 @@ impl ProjectRole {
         user_id: &ObjectId,
         permit: &ProjectRolePermission,
     ) -> bool {
-        if let Ok(Some(project)) = Project::find_by_id(&project_id).await {
+        if let Ok(Some(project)) = Project::find_by_id(project_id).await {
             if let Some(members) = &project.member {
                 if let Some(member) = members.iter().find(|&a| a._id == *user_id) {
                     for id in &member.role_id {
                         if let Ok(Some(role)) = Self::find_by_id(id).await {
                             if role.permission.iter().any(|permission| match permission {
-                                ProjectRolePermission::Owner => return true,
-                                _ => return permission == permit,
+                                ProjectRolePermission::Owner => true,
+                                _ => permission == permit,
                             }) {
                                 return true;
                             }
@@ -73,7 +75,7 @@ impl ProjectRole {
                 .map_err(|_| "INSERTING_FAILED".to_string())
                 .map(|result| result.inserted_id.as_object_id().unwrap())
         } else {
-            return Err("PROJECT_NOT_FOUND".to_string());
+            Err("PROJECT_NOT_FOUND".to_string())
         }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<ProjectRole>, String> {

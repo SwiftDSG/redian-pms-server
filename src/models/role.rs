@@ -58,11 +58,9 @@ impl Role {
     pub async fn validate(ids: &[ObjectId], permit: &RolePermission) -> bool {
         for id in ids.iter() {
             if let Ok(Some(role)) = Self::find_by_id(id).await {
-                if role.permission.iter().any(|permission| {
-                    return match permission {
-                        RolePermission::Owner => true,
-                        _ => permission == permit,
-                    };
+                if role.permission.iter().any(|permission| match permission {
+                    RolePermission::Owner => true,
+                    _ => permission == permit,
                 }) {
                     return true;
                 }

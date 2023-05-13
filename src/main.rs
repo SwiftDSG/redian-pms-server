@@ -10,27 +10,27 @@ fn load_env() {
         let lines: Vec<(&str, &str)> = env
             .lines()
             .map(|a| {
-                let b: Vec<&str> = a.split("=").collect();
+                let b: Vec<&str> = a.split('=').collect();
                 (
-                    b.get(0).expect("INVALID_ENVIRONMENT_VARIABLES").clone(),
-                    b.get(1).expect("INVALID_ENVIRONMENT_VARIABLES").clone(),
+                    <&str>::clone(b.first().expect("INVALID_ENVIRONMENT_VARIABLES")),
+                    <&str>::clone(b.last().expect("INVALID_ENVIRONMENT_VARIABLES")),
                 )
             })
             .collect();
 
         for (key, value) in lines {
-            std::env::set_var(key.to_string(), value.to_string());
+            std::env::set_var(key, value);
         }
     }
 
     if std::env::var("DATABASE_URI").is_err() {
-        std::env::set_var("DATABASE_URI", "mongodb://localhost:27017".to_string());
+        std::env::set_var("DATABASE_URI", "mongodb://localhost:27017");
     }
     if std::env::var("CLIENT_URL").is_err() {
-        std::env::set_var("CLIENT_URL", "http://localhost:3000".to_string());
+        std::env::set_var("CLIENT_URL", "http://localhost:3000");
     }
     if std::env::var("BASE_URL").is_err() {
-        std::env::set_var("BASE_URL", "http://localhost:8000".to_string());
+        std::env::set_var("BASE_URL", "http://localhost:8000");
     }
 }
 
@@ -61,6 +61,7 @@ async fn main() -> io::Result<()> {
             .service(routes::project::create_project_task)
             .service(routes::project::create_project_task_sub)
             .service(routes::project::create_project_report)
+            .service(routes::project::create_project_incident)
             .service(routes::project::update_project_task)
             .service(routes::project::update_project_task_period)
             .service(routes::project::update_project_task_status)
