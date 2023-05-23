@@ -25,8 +25,8 @@ use mongodb::bson::{doc, oid::ObjectId, to_bson, DateTime};
 
 use crate::models::{
     project::{
-        Project, ProjectAreaRequest, ProjectMember, ProjectMemberKind, ProjectRequest,
-        ProjectStatus, ProjectStatusKind,
+        Project, ProjectAreaRequest, ProjectMember, ProjectMemberKind, ProjectQuery,
+        ProjectRequest, ProjectStatus, ProjectStatusKind,
     },
     project_incident_report::{
         ProjectIncidentReport, ProjectIncidentReportRequest, ProjectIncidentReportRequestQuery,
@@ -44,19 +44,6 @@ use crate::models::{
     user::UserAuthentication,
 };
 
-// #[get("/projects")]
-// pub async fn get_projects() -> HttpResponse {
-//     let query: ProjectQuery = ProjectQuery {
-//         _id: None,
-//         limit: None,
-//     };
-
-//     match Project::find_many(&query).await {
-//         Ok(projects) => HttpResponse::Ok().json(projects),
-//         Err(error) => HttpResponse::BadRequest().body(error),
-//     }
-// }
-
 // #[delete("/projects/{_id}")]
 // pub async fn delete_project(_id: web::Path<String>) -> HttpResponse {
 //     let _id: String = _id.into_inner();
@@ -70,6 +57,18 @@ use crate::models::{
 //     }
 // }
 
+#[get("/projects")]
+pub async fn get_projects() -> HttpResponse {
+    let query: ProjectQuery = ProjectQuery {
+        _id: None,
+        limit: None,
+    };
+
+    match Project::find_many(&query).await {
+        Ok(projects) => HttpResponse::Ok().json(projects),
+        Err(error) => HttpResponse::BadRequest().body(error),
+    }
+}
 #[get("/projects/{project_id}")]
 pub async fn get_project(project_id: web::Path<String>) -> HttpResponse {
     let project_id = match project_id.parse() {

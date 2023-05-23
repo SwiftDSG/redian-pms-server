@@ -46,7 +46,8 @@ async fn main() -> io::Result<()> {
         let cors = Cors::default()
             .allowed_origin(&std::env::var("CLIENT_URL").unwrap())
             .allow_any_header()
-            .allow_any_method();
+            .allow_any_method()
+            .supports_credentials();
         App::new()
             .wrap(models::user::UserAuthenticationMiddlewareFactory)
             .wrap(cors)
@@ -60,6 +61,7 @@ async fn main() -> io::Result<()> {
             .service(routes::customer::get_customer)
             .service(routes::customer::update_customer)
             .service(routes::customer::create_customer)
+            .service(routes::project::get_projects)
             .service(routes::project::get_project)
             .service(routes::customer::delete_customer)
             .service(routes::project::create_project)

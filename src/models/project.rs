@@ -1,8 +1,9 @@
 use crate::database::get_db;
 
 use chrono::Utc;
+use futures::stream::StreamExt;
 use mongodb::{
-    bson::{doc, oid::ObjectId, to_bson, DateTime},
+    bson::{doc, from_document, oid::ObjectId, to_bson, DateTime},
     Collection, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -69,12 +70,23 @@ pub struct ProjectQuery {
     pub _id: Option<ObjectId>,
     pub limit: Option<usize>,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct ProjectRequest {
     pub customer_id: ObjectId,
     pub name: String,
     pub code: String,
     pub status: Option<ProjectStatusKind>,
+    pub holiday: Option<Vec<DateTime>>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectResponse {
+    pub _id: Option<String>,
+    pub customer_id: String,
+    pub name: String,
+    pub code: String,
+    pub status: Vec<ProjectStatus>,
+    pub area: Option<Vec<ProjectArea>>,
+    pub member: Option<Vec<ProjectMember>>,
     pub holiday: Option<Vec<DateTime>>,
 }
 
@@ -159,6 +171,50 @@ impl Project {
             .await
             .map_err(|_| "UPDATE_FAILED".to_string())
             .map(|_| self._id.unwrap())
+    }
+    pub async fn find_many(query: &ProjectQuery) -> Result<Vec<ProjectResponse>, String> {
+        let db: Database = get_db();
+        let collection: Collection<User> = db.collection::<User>("projects");
+
+        let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
+        let mut users: Vec<ProjectResponse> = Vec::new();
+
+        if let Some(limit) = query.limit {
+            pipeline.push(doc! {
+                "$limit": to_bson::<usize>(&limit).unwrap()
+            })
+        }
+
+        pipeline.push(doc! {
+            "$project": {
+                "_id": {
+                    "$toString": "$_id"
+                },
+                "customer_id": {
+                    "$toString": "$customer_id"
+                },
+                "name": "$name",
+                "code": "$code",
+                "status": "$status",
+                "area": "$area",
+                "member": "$member",
+                "holiday": "$holiday",
+            }
+        });
+
+        if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
+            while let Some(Ok(doc)) = cursor.next().await {
+                let user: ProjectResponse = from_document::<ProjectResponse>(doc).unwrap();
+                users.push(user);
+            }
+            if !users.is_empty() {
+                Ok(users)
+            } else {
+                Err("USER_NOT_FOUND".to_string())
+            }
+        } else {
+            Err("USER_NOT_FOUND".to_string())
+        }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<Project>, String> {
         let db: Database = get_db();
