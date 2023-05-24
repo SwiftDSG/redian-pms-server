@@ -640,7 +640,8 @@ pub async fn add_project_member(
         HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
     }
 }
-#[patch("/projects/{project_id}/areas")] // FINISHED
+//DIGANTI PATCH!!!!!
+#[post("/projects/{project_id}/areas")] // FINISHED
 pub async fn add_project_area(
     project_id: web::Path<String>,
     payload: web::Json<ProjectAreaRequest>,
