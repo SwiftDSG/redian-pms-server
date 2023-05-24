@@ -89,6 +89,17 @@ pub struct ProjectResponse {
     pub member: Option<Vec<ProjectMember>>,
     pub holiday: Option<Vec<DateTime>>,
 }
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectDetailResponse {
+    pub _id: Option<String>,
+    pub customer_id: String,
+    pub name: String,
+    pub code: String,
+    pub status: Vec<ProjectStatus>,
+    pub area: Option<Vec<ProjectArea>>,
+    pub member: Option<Vec<ProjectMember>>,
+    pub holiday: Option<Vec<DateTime>>,
+}
 
 impl Project {
     pub async fn save(&mut self) -> Result<ObjectId, String> {
@@ -174,7 +185,7 @@ impl Project {
     }
     pub async fn find_many(query: &ProjectQuery) -> Result<Vec<ProjectResponse>, String> {
         let db: Database = get_db();
-        let collection: Collection<User> = db.collection::<User>("projects");
+        let collection: Collection<Project> = db.collection::<Project>("projects");
 
         let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
         let mut users: Vec<ProjectResponse> = Vec::new();
@@ -210,10 +221,10 @@ impl Project {
             if !users.is_empty() {
                 Ok(users)
             } else {
-                Err("USER_NOT_FOUND".to_string())
+                Err("PROJECT_NOT_FOUND".to_string())
             }
         } else {
-            Err("USER_NOT_FOUND".to_string())
+            Err("PROJECT_NOT_FOUND".to_string())
         }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<Project>, String> {
@@ -223,7 +234,44 @@ impl Project {
         collection
             .find_one(doc! { "_id": _id }, None)
             .await
-            .map_err(|_| "ROLE_NOT_FOUND".to_string())
+            .map_err(|_| "PROJECT_NOT_FOUND".to_string())
+    }
+    pub async fn find_detail_by_id(
+        _id: &ObjectId,
+    ) -> Result<Option<ProjectDetailResponse>, String> {
+        let db: Database = get_db();
+        let collection: Collection<Project> = db.collection::<Project>("projects");
+
+        let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
+
+        pipeline.push(doc! {
+            "$project": {
+                "_id": {
+                    "$toString": "$_id"
+                },
+                "customer_id": {
+                    "$toString": "$customer_id"
+                },
+                "name": "$name",
+                "code": "$code",
+                "status": "$status",
+                "area": "$area",
+                "member": "$member",
+                "holiday": "$holiday",
+            }
+        });
+
+        if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
+            if let Some(Ok(doc)) = cursor.next().await {
+                let user: ProjectDetailResponse =
+                    from_document::<ProjectDetailResponse>(doc).unwrap();
+                Ok(Some(user))
+            } else {
+                Err("PROJECT_NOT_FOUND".to_string())
+            }
+        } else {
+            Err("PROJECT_NOT_FOUND".to_string())
+        }
     }
     pub async fn delete_by_id(_id: &ObjectId) -> Result<u64, String> {
         let db: Database = get_db();

@@ -76,7 +76,7 @@ pub async fn get_project(project_id: web::Path<String>) -> HttpResponse {
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
     };
 
-    match Project::find_by_id(&project_id).await {
+    match Project::find_detail_by_id(&project_id).await {
         Ok(Some(project)) => HttpResponse::Ok().json(project),
         Ok(None) => HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string()),
         Err(error) => HttpResponse::InternalServerError().body(error),
