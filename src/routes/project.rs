@@ -231,7 +231,7 @@ pub async fn create_project_task(
     }
 
     match project_task.save().await {
-        Ok(task_id) => HttpResponse::Ok().body(task_id.to_string()),
+        Ok(task_id) => HttpResponse::Created().body(task_id.to_string()),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
@@ -303,7 +303,7 @@ pub async fn create_project_task_sub(
                 }
             }
 
-            HttpResponse::Ok().json(doc! {
+            HttpResponse::Created().json(doc! {
                 "_id": to_bson::<Vec<ObjectId>>(&new_task_id).unwrap()
             })
         } else {
