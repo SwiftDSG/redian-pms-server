@@ -19,14 +19,14 @@ use std::{
 };
 
 use actix_multipart::form::MultipartForm;
-use actix_web::{get, patch, post, put, web, HttpMessage, HttpRequest, HttpResponse};
+use actix_web::{get, post, put, web, HttpMessage, HttpRequest, HttpResponse};
 use chrono::Utc;
 use mongodb::bson::{doc, oid::ObjectId, to_bson, DateTime};
 
 use crate::models::{
     project::{
-        Project, ProjectAreaRequest, ProjectMember, ProjectMemberKind, ProjectQuery,
-        ProjectRequest, ProjectStatus, ProjectStatusKind,
+        Project, ProjectAreaRequest, ProjectMember, ProjectMemberKind, ProjectProgressResponse,
+        ProjectQuery, ProjectRequest, ProjectStatus, ProjectStatusKind,
     },
     project_incident_report::{
         ProjectIncidentReport, ProjectIncidentReportRequest, ProjectIncidentReportRequestQuery,
@@ -37,8 +37,9 @@ use crate::models::{
     },
     project_role::{ProjectRole, ProjectRolePermission, ProjectRoleRequest},
     project_task::{
-        ProjectTask, ProjectTaskPeriod, ProjectTaskPeriodRequest, ProjectTaskRequest,
-        ProjectTaskStatus, ProjectTaskStatusKind, ProjectTaskStatusRequest,
+        ProjectTask, ProjectTaskMinResponse, ProjectTaskPeriod, ProjectTaskPeriodRequest,
+        ProjectTaskQuery, ProjectTaskQueryKind, ProjectTaskRequest, ProjectTaskStatus,
+        ProjectTaskStatusKind, ProjectTaskStatusRequest, ProjectTaskTimelineQuery,
     },
     role::{Role, RolePermission},
     user::UserAuthentication,
@@ -82,6 +83,152 @@ pub async fn get_project(project_id: web::Path<String>) -> HttpResponse {
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
+#[get("/projects/{project_id}/areas")]
+pub async fn get_project_areas(project_id: web::Path<String>) -> HttpResponse {
+    let project_id: ObjectId = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    match ProjectTask::find_many_area(&project_id).await {
+        Ok(Some(project)) => HttpResponse::Ok().json(project),
+        Ok(None) => HttpResponse::NotFound().body("PROJECT_AREA_NOT_FOUND".to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
+#[get("/projects/{project_id}/tasks")]
+pub async fn get_project_tasks(project_id: web::Path<String>) -> HttpResponse {
+    let project_id: ObjectId = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    match ProjectTask::find_many_timeline(&ProjectTaskTimelineQuery {
+        area_id: None,
+        project_id,
+    })
+    .await
+    {
+        Ok(Some(project)) => HttpResponse::Ok().json(project),
+        Ok(None) => HttpResponse::Ok().json(Vec::<ProjectTaskMinResponse>::new()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
+#[get("/projects/{project_id}/progress")]
+pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse {
+    let project_id: ObjectId = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    let mut bases: Vec<ProjectTask> = Vec::new();
+    let mut dependencies: Vec<ProjectTask> = Vec::new();
+
+    if let Ok(Some(tasks)) = ProjectTask::find_many(&ProjectTaskQuery {
+        _id: None,
+        project_id: Some(project_id),
+        task_id: None,
+        area_id: None,
+        limit: None,
+        kind: Some(ProjectTaskQueryKind::Base),
+    })
+    .await
+    {
+        bases = tasks;
+    }
+    if let Ok(Some(tasks)) = ProjectTask::find_many(&ProjectTaskQuery {
+        _id: None,
+        project_id: Some(project_id),
+        task_id: None,
+        area_id: None,
+        limit: None,
+        kind: Some(ProjectTaskQueryKind::Dependency),
+    })
+    .await
+    {
+        dependencies = tasks;
+    }
+
+    if !bases.is_empty() && !dependencies.is_empty() {
+        for task in bases.iter_mut() {
+            let mut _id = task.task_id;
+            let mut found = true;
+            while found {
+                if let Some(task_id) = _id {
+                    if let Some(index) = dependencies.iter().position(|a| a._id.unwrap() == task_id)
+                    {
+                        task.value *= dependencies[index].value / 100.0;
+                        _id = dependencies[index].task_id;
+                    }
+                } else {
+                    found = false;
+                }
+            }
+        }
+    }
+
+    let start = bases
+        .iter()
+        .filter(|a| a.period.is_some())
+        .map(|a| a.period.clone().unwrap().start.timestamp_millis())
+        .min();
+    let end = bases
+        .iter()
+        .filter(|a| a.period.is_some())
+        .map(|a| a.period.clone().unwrap().end.timestamp_millis())
+        .max();
+
+    let mut diff = 0;
+    let mut start_milis: i64 = Utc::now().timestamp_millis() - 86400000;
+
+    if let Some(start) = start {
+        if let Some(end) = end {
+            diff = (end - start) / 86400000 + 1;
+            start_milis = start;
+        }
+    }
+
+    let mut datas: Vec<ProjectProgressResponse> = vec![ProjectProgressResponse {
+        x: start_milis - 86400000,
+        y: vec![0.0],
+    }];
+
+    for i in 0..diff {
+        let date = start_milis + i * 86400000;
+        let prev_y = datas.last().map_or_else(|| 0.0, |v| *v.y.get(0).unwrap());
+        let mut y: f64 = bases
+            .iter()
+            .filter(|a| {
+                if let Some(period) = a.period.as_ref() {
+                    let start = period.start.timestamp_millis();
+                    let end = period.end.timestamp_millis();
+                    date >= start && date <= end
+                } else {
+                    false
+                }
+            })
+            .fold(prev_y, |a, b| {
+                let period = b.period.as_ref().unwrap();
+                let start = period.start.timestamp_millis();
+                let end = period.end.timestamp_millis();
+                let diff = (end - start) / 86400000 + 1;
+                a + (b.value / (diff as f64))
+            });
+
+        if y >= 99.99 {
+            y = 100.0
+        }
+
+        let data = ProjectProgressResponse {
+            x: date,
+            y: vec![y],
+        };
+
+        datas.push(data);
+    }
+
+    HttpResponse::Ok().json(datas)
+}
 #[post("/projects")] // FINISHED
 pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest) -> HttpResponse {
     let issuer = match req.extensions().get::<UserAuthentication>() {
@@ -107,7 +254,7 @@ pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest
         }],
         member: None,
         area: None,
-        holiday: payload.holiday,
+        leave: payload.leave,
     };
     match project.save().await {
         Ok(project_id) => {
@@ -444,7 +591,7 @@ pub async fn update_project_task(
     }
 }
 
-#[patch("/projects/{project_id}/tasks/{task_id}/status")]
+#[put("/projects/{project_id}/tasks/{task_id}/status")]
 pub async fn update_project_task_status(
     _id: web::Path<(String, String)>,
     payload: web::Json<ProjectTaskStatusRequest>,
@@ -474,7 +621,7 @@ pub async fn update_project_task_status(
         HttpResponse::NotFound().body("PROJECT_TASK_NOT_FOUND".to_string())
     }
 }
-#[patch("/projects/{project_id}/tasks/{task_id}/period")]
+#[put("/projects/{project_id}/tasks/{task_id}/period")]
 pub async fn update_project_task_period(
     _id: web::Path<(String, String)>,
     payload: web::Json<ProjectTaskPeriodRequest>,
@@ -497,8 +644,8 @@ pub async fn update_project_task_period(
         let payload: ProjectTaskPeriodRequest = payload.into_inner();
 
         let period: ProjectTaskPeriod = ProjectTaskPeriod {
-            start: payload.start,
-            end: payload.end,
+            start: DateTime::from_millis(payload.start),
+            end: DateTime::from_millis(payload.end),
         };
 
         match task.update_period(period).await {
@@ -509,7 +656,7 @@ pub async fn update_project_task_period(
         HttpResponse::NotFound().body("PROJECT_TASK_NOT_FOUND".to_string())
     }
 }
-#[patch("/projects/{project_id}/reports/{report_id}")] // REDO ALL CHANGES WHEN FAILED
+#[put("/projects/{project_id}/reports/{report_id}")] // REDO ALL CHANGES WHEN FAILED
 pub async fn update_project_report(
     _id: web::Path<(String, String)>,
     form: MultipartForm<ProjectProgressReportDocumentationRequest>,
@@ -610,7 +757,7 @@ pub async fn update_project_report(
 
     HttpResponse::Ok().body(report_id.to_string())
 }
-#[patch("/projects/{project_id}/members")]
+#[put("/projects/{project_id}/members")]
 pub async fn add_project_member(
     project_id: web::Path<String>,
     payload: web::Json<ProjectMember>,
@@ -640,8 +787,8 @@ pub async fn add_project_member(
         HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
     }
 }
-//DIGANTI PATCH!!!!!
-#[post("/projects/{project_id}/areas")] // FINISHED
+//DIGANTI POST -> PATCH!!!!!
+#[put("/projects/{project_id}/areas")] // FINISHED
 pub async fn add_project_area(
     project_id: web::Path<String>,
     payload: web::Json<ProjectAreaRequest>,

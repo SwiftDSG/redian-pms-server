@@ -97,7 +97,7 @@ impl ProjectProgressReport {
             let mut invalid_task_index = Vec::<usize>::new();
             for (i, actual_task) in actual.iter_mut().enumerate() {
                 if let Ok(Some(task)) = ProjectTask::find_detail_by_id(&actual_task.task_id).await {
-                    if task.sub_task.is_some() {
+                    if task.task.is_some() {
                         invalid_task_index.push(i);
                         continue;
                     }

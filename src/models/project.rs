@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     customer::Customer,
-    project_task::{ProjectTask, ProjectTaskQuery},
+    project_task::{ProjectTask, ProjectTaskMinResponse, ProjectTaskQuery, ProjectTaskQueryKind},
     user::User,
 };
 
@@ -41,7 +41,7 @@ pub struct Project {
     pub status: Vec<ProjectStatus>,
     pub area: Option<Vec<ProjectArea>>,
     pub member: Option<Vec<ProjectMember>>,
-    pub holiday: Option<Vec<DateTime>>,
+    pub leave: Option<Vec<DateTime>>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectStatus {
@@ -76,29 +76,41 @@ pub struct ProjectRequest {
     pub name: String,
     pub code: String,
     pub status: Option<ProjectStatusKind>,
-    pub holiday: Option<Vec<DateTime>>,
+    pub leave: Option<Vec<DateTime>>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectMinResponse {
+    pub _id: String,
+    pub customer_id: String,
+    pub name: String,
+    pub code: String,
+    pub status: Vec<ProjectStatus>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectResponse {
-    pub _id: Option<String>,
-    pub customer_id: String,
+    pub _id: String,
+    pub customer: ProjectCustomerResponse,
     pub name: String,
     pub code: String,
     pub status: Vec<ProjectStatus>,
     pub area: Option<Vec<ProjectArea>>,
-    pub member: Option<Vec<ProjectMember>>,
-    pub holiday: Option<Vec<DateTime>>,
+    pub leave: Option<Vec<DateTime>>,
 }
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ProjectDetailResponse {
-    pub _id: Option<String>,
-    pub customer_id: String,
+pub struct ProjectCustomerResponse {
+    pub _id: String,
     pub name: String,
-    pub code: String,
-    pub status: Vec<ProjectStatus>,
-    pub area: Option<Vec<ProjectArea>>,
-    pub member: Option<Vec<ProjectMember>>,
-    pub holiday: Option<Vec<DateTime>>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectAreaResponse {
+    pub _id: String,
+    pub name: String,
+    pub task: Option<Vec<ProjectTaskMinResponse>>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectProgressResponse {
+    pub x: i64,
+    pub y: Vec<f64>,
 }
 
 impl Project {
@@ -183,12 +195,12 @@ impl Project {
             .map_err(|_| "UPDATE_FAILED".to_string())
             .map(|_| self._id.unwrap())
     }
-    pub async fn find_many(query: &ProjectQuery) -> Result<Vec<ProjectResponse>, String> {
+    pub async fn find_many(query: &ProjectQuery) -> Result<Vec<ProjectMinResponse>, String> {
         let db: Database = get_db();
         let collection: Collection<Project> = db.collection::<Project>("projects");
 
         let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
-        let mut users: Vec<ProjectResponse> = Vec::new();
+        let mut users: Vec<ProjectMinResponse> = Vec::new();
 
         if let Some(limit) = query.limit {
             pipeline.push(doc! {
@@ -207,15 +219,12 @@ impl Project {
                 "name": "$name",
                 "code": "$code",
                 "status": "$status",
-                "area": "$area",
-                "member": "$member",
-                "holiday": "$holiday",
             }
         });
 
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             while let Some(Ok(doc)) = cursor.next().await {
-                let user: ProjectResponse = from_document::<ProjectResponse>(doc).unwrap();
+                let user: ProjectMinResponse = from_document::<ProjectMinResponse>(doc).unwrap();
                 users.push(user);
             }
             if !users.is_empty() {
@@ -236,41 +245,71 @@ impl Project {
             .await
             .map_err(|_| "PROJECT_NOT_FOUND".to_string())
     }
-    pub async fn find_detail_by_id(
-        _id: &ObjectId,
-    ) -> Result<Option<ProjectDetailResponse>, String> {
+    pub async fn find_detail_by_id(_id: &ObjectId) -> Result<Option<ProjectResponse>, String> {
         let db: Database = get_db();
         let collection: Collection<Project> = db.collection::<Project>("projects");
 
-        let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
+        let pipeline: Vec<mongodb::bson::Document> = vec![
+            doc! {
+                "$match": {
+                    "$expr": {
+                        "$eq": [ "$_id", to_bson::<ObjectId>(&_id).unwrap() ]
+                    }
+                }
+            },
+            doc! {
+                "$lookup": {
+                    "from": "customers",
+                    "let": {
+                        "customer_id": "$customer_id"
+                    },
+                    "as": "customers",
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {
+                                    "$eq": ["$_id", "$$customer_id"]
+                                }
+                            }
+                        },
+                        {
+                            "$project": {
+                                "_id": {
+                                    "$toString": "$_id"
+                                },
+                                "name": "$name"
+                            }
+                        }
+                    ]
+                }
+            },
+            doc! {
+                "$project": {
+                    "_id": {
+                        "$toString": "$_id"
+                    },
+                    "customer": {
+                        "$first": "$customers"
+                    },
+                    "name": "$name",
+                    "code": "$code",
+                    "status": "$status",
+                    "area": "$area",
+                    "leave": "$leave",
+                }
+            },
+        ];
 
-        pipeline.push(doc! {
-            "$project": {
-                "_id": {
-                    "$toString": "$_id"
-                },
-                "customer_id": {
-                    "$toString": "$customer_id"
-                },
-                "name": "$name",
-                "code": "$code",
-                "status": "$status",
-                "area": "$area",
-                "member": "$member",
-                "holiday": "$holiday",
+        match collection.aggregate(pipeline, None).await {
+            Ok(mut cursor) => {
+                if let Some(Ok(doc)) = cursor.next().await {
+                    let user: ProjectResponse = from_document::<ProjectResponse>(doc).unwrap();
+                    Ok(Some(user))
+                } else {
+                    Err("PROJECT_NOT_FOUND".to_string())
+                }
             }
-        });
-
-        if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
-            if let Some(Ok(doc)) = cursor.next().await {
-                let user: ProjectDetailResponse =
-                    from_document::<ProjectDetailResponse>(doc).unwrap();
-                Ok(Some(user))
-            } else {
-                Err("PROJECT_NOT_FOUND".to_string())
-            }
-        } else {
-            Err("PROJECT_NOT_FOUND".to_string())
+            Err(_) => Err("PROJECT_NOT_FOUND".to_string()),
         }
     }
     pub async fn delete_by_id(_id: &ObjectId) -> Result<u64, String> {
@@ -308,7 +347,7 @@ impl Project {
                 task_id: None,
                 area_id: None,
                 limit: None,
-                base: true,
+                kind: Some(ProjectTaskQueryKind::Root),
             })
             .await?
             .ok_or_else(|| "PROJECT_TASK_NOT_FOUND".to_string())?;

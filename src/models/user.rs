@@ -39,6 +39,12 @@ pub struct User {
     pub email: String,
     pub password: String,
     pub role: Vec<ObjectId>,
+    pub image: Option<UserImage>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UserImage {
+    pub _id: String,
+    pub extension: String,
 }
 #[derive(Debug, Deserialize)]
 pub struct UserCredential {

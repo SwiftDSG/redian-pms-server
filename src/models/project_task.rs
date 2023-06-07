@@ -9,7 +9,10 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::project::{Project, ProjectStatusKind};
+use super::{
+    project::{Project, ProjectAreaResponse, ProjectStatusKind},
+    user::UserImage,
+};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +21,13 @@ pub enum ProjectTaskStatusKind {
     Paused,
     Pending,
     Finished,
+}
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectTaskQueryKind {
+    Root,       // Main tasks (does not have parent task)
+    Dependency, // Tasks that have sub-tasks
+    Base,       // Tasks that does not have sub-task
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -57,35 +67,58 @@ pub struct ProjectTaskStatusRequest {
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectTaskResponse {
-    pub _id: ObjectId,
+    pub _id: String,
     pub project: ProjectTaskProjectResponse,
     pub area: ProjectTaskAreaResponse,
-    pub sub_task: Option<Vec<ProjectTaskSubTaskResponse>>,
+    pub task: Option<Vec<ProjectTaskTaskResponse>>,
     pub name: String,
-    pub period: Option<ProjectTaskPeriod>,
+    pub description: Option<String>,
+    pub period: Option<ProjectTaskPeriodResponse>,
     pub status: Vec<ProjectTaskStatus>,
     pub volume: Option<ProjectTaskVolume>,
     pub value: f64,
     pub progress: f64,
 }
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ProjectTaskSubTaskResponse {
-    pub _id: ObjectId,
+pub struct ProjectTaskMinResponse {
+    pub _id: String,
+    pub task_id: Option<ObjectId>,
+    pub user: Option<Vec<ProjectTaskUserResponse>>,
+    pub task: Option<Vec<ProjectTaskTaskResponse>>,
     pub name: String,
-    pub period: Option<ProjectTaskPeriod>,
+    pub period: Option<ProjectTaskPeriodResponse>,
     pub status: Vec<ProjectTaskStatus>,
     pub volume: Option<ProjectTaskVolume>,
-    pub progress: f64,
+    pub value: f64,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectTaskTaskResponse {
+    pub _id: String,
+    pub name: String,
+    pub period: Option<ProjectTaskPeriodResponse>,
+    pub status: Vec<ProjectTaskStatus>,
+    pub volume: Option<ProjectTaskVolume>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectTaskUserResponse {
+    pub _id: String,
+    pub name: String,
+    pub image: Option<UserImage>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectTaskProjectResponse {
-    pub _id: ObjectId,
+    pub _id: String,
     pub name: String,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectTaskAreaResponse {
-    pub _id: ObjectId,
+    pub _id: String,
     pub name: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectTaskPeriodResponse {
+    pub start: String,
+    pub end: String,
 }
 #[derive(Debug)]
 pub struct ProjectTaskQuery {
@@ -94,8 +127,13 @@ pub struct ProjectTaskQuery {
     pub task_id: Option<ObjectId>,
     pub area_id: Option<ObjectId>,
     pub limit: Option<usize>,
-    pub base: bool,
+    pub kind: Option<ProjectTaskQueryKind>,
 }
+pub struct ProjectTaskTimelineQuery {
+    pub project_id: ObjectId,
+    pub area_id: Option<ObjectId>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectTaskRequest {
     pub area_id: Option<ObjectId>,
@@ -107,8 +145,15 @@ pub struct ProjectTaskRequest {
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectTaskPeriodRequest {
-    pub start: DateTime,
-    pub end: DateTime,
+    pub start: i64,
+    pub end: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectTaskDependency {
+    pub _id: ObjectId,
+    pub task_id: Option<ObjectId>,
+    pub value: f64,
 }
 
 impl ProjectTask {
@@ -171,6 +216,31 @@ impl ProjectTask {
         let db: Database = get_db();
         let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
 
+        let tasks = Self::find_many(&ProjectTaskQuery {
+            _id: None,
+            project_id: Some(self.project_id),
+            task_id: None,
+            area_id: None,
+            limit: None,
+            kind: None,
+        })
+        .await
+        .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())?
+        .ok_or_else(|| "PROJECT_TASK_NOT_FOUND")?;
+        let mut task_id: Vec<ObjectId> = Vec::new();
+
+        for task in tasks.iter() {
+            if let Some(_id) = task.task_id {
+                if !task_id.contains(&_id) {
+                    task_id.push(_id);
+                }
+            }
+        }
+
+        if task_id.contains(&self._id.unwrap()) {
+            return Err("PROJECT_TASK_DEPENDENCY".to_string());
+        }
+
         if period.start.timestamp_millis() >= period.end.timestamp_millis() {
             return Err("INVALID_PERIOD".to_string());
         }
@@ -214,7 +284,7 @@ impl ProjectTask {
                     task_id: self.task_id,
                     area_id: None,
                     limit: None,
-                    base: false,
+                    kind: None,
                 })
                 .await?
                 .ok_or_else(|| "UPDATE_FAILED".to_string())?;
@@ -234,7 +304,7 @@ impl ProjectTask {
                     task_id: None,
                     area_id: None,
                     limit: None,
-                    base: true,
+                    kind: Some(ProjectTaskQueryKind::Root),
                 })
                 .await?
                 .ok_or_else(|| "UPDATE_FAILED".to_string())?;
@@ -291,29 +361,66 @@ impl ProjectTask {
         let mut pipeline: Vec<Document> = Vec::<Document>::new();
         let mut queries: Vec<Document> = Vec::<Document>::new();
 
-        if let Some(_id) = query._id {
+        if let Some(_id) = &query._id {
             queries.push(doc! {
-                "$eq": [ "$_id", to_bson::<ObjectId>(&_id).unwrap() ]
+                "$eq": [ "$_id", to_bson::<ObjectId>(_id).unwrap() ]
             });
         }
-        if let Some(_id) = query.project_id {
+        if let Some(_id) = &query.project_id {
             queries.push(doc! {
-                "$eq": [ "$project_id", to_bson::<ObjectId>(&_id).unwrap() ]
+                "$eq": [ "$project_id", to_bson::<ObjectId>(_id).unwrap() ]
             });
         }
-        if let Some(_id) = query.area_id {
+        if let Some(_id) = &query.area_id {
             queries.push(doc! {
-                "$eq": [ "$area_id", to_bson::<ObjectId>(&_id).unwrap() ]
+                "$eq": [ "$area_id", to_bson::<ObjectId>(_id).unwrap() ]
             });
         }
-        if let Some(_id) = query.task_id {
+        if let Some(_id) = &query.task_id {
             queries.push(doc! {
-                "$eq": [ "$task_id", to_bson::<ObjectId>(&_id).unwrap() ]
+                "$eq": [ "$task_id", to_bson::<ObjectId>(_id).unwrap() ]
             });
-        } else if query.base {
-            queries.push(doc! {
-                "$eq": [ "$task_id", to_bson::<Option<ObjectId>>(&None).unwrap() ]
-            });
+        }
+        if let Some(kind) = query.kind.clone() {
+            if kind == ProjectTaskQueryKind::Root {
+                queries.push(doc! {
+                    "$eq": [ "$task_id", to_bson::<Option<ObjectId>>(&None).unwrap() ]
+                });
+            } else {
+                let mut task_id: Vec<ObjectId> = Vec::new();
+                if let Ok(mut cursor) = collection
+                    .find(
+                        doc! {
+                            "project_id": to_bson::<Option<ObjectId>>(&query.project_id).unwrap()
+                        },
+                        None,
+                    )
+                    .await
+                {
+                    while let Some(Ok(task)) = cursor.next().await {
+                        if let Some(_id) = task.task_id {
+                            if !task_id.contains(&_id) {
+                                task_id.push(_id);
+                            }
+                        }
+                    }
+                }
+
+                if kind == ProjectTaskQueryKind::Dependency {
+                    queries.push(doc! {
+                        "$in": ["$_id", to_bson::<Vec<ObjectId>>(&task_id).unwrap()]
+                    });
+                } else {
+                    queries.push(doc! {
+                        "$ne": [
+                            {
+                                "$in": ["$_id", to_bson::<Vec<ObjectId>>(&task_id).unwrap()]
+                            },
+                            to_bson::<bool>(&true).unwrap()
+                        ]
+                    });
+                }
+            }
         }
 
         pipeline.push(doc! {
@@ -342,6 +449,317 @@ impl ProjectTask {
             }
         } else {
             Err("PROJECT_TASK_NOT_FOUND".to_string())
+        }
+    }
+    pub async fn find_many_timeline(
+        query: &ProjectTaskTimelineQuery,
+    ) -> Result<Option<Vec<ProjectTaskMinResponse>>, String> {
+        let db: Database = get_db();
+        let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
+
+        let mut dependencies: Vec<ProjectTask> = Vec::new();
+        let mut task_id: Vec<ObjectId> = Vec::new();
+
+        if let Ok(Some(tasks)) = Self::find_many(&ProjectTaskQuery {
+            _id: None,
+            project_id: Some(query.project_id),
+            task_id: None,
+            area_id: None,
+            limit: None,
+            kind: Some(ProjectTaskQueryKind::Dependency),
+        })
+        .await
+        {
+            dependencies = tasks;
+            for task in dependencies.iter() {
+                if !task_id.contains(&task._id.unwrap()) {
+                    task_id.push(task._id.unwrap());
+                }
+            }
+        }
+
+        let mut pipeline: Vec<Document> = Vec::<Document>::new();
+        let mut queries: Vec<Document> = Vec::<Document>::new();
+
+        queries.push(doc! {
+            "$eq": [ "$project_id", to_bson::<ObjectId>(&query.project_id).unwrap() ]
+        });
+        queries.push(doc! {
+            "$ne": [
+                {
+                    "$in": ["$_id", to_bson::<Vec<ObjectId>>(&task_id).unwrap()]
+                },
+                to_bson::<bool>(&true).unwrap()
+            ]
+        });
+        if let Some(_id) = query.area_id {
+            queries.push(doc! {
+                "$eq": [ "$area_id", to_bson::<ObjectId>(&_id).unwrap() ]
+            });
+        }
+
+        pipeline.push(doc! {
+            "$match": {
+                "$expr": {
+                    "$and": queries
+                }
+            }
+        });
+
+        pipeline.push(doc! {
+            "$project": {
+                "_id": {
+                    "$toString": "$_id"
+                },
+                "task_id": "$task_id",
+                "user": "$user",
+                "task": "$task",
+                "name": "$name",
+                "period": {
+                    "$cond": [
+                        "$period",
+                        {
+                            "start": {
+                                "$toString": "$period.start"
+                            },
+                            "end": {
+                                "$toString": "$period.end"
+                            },
+                        },
+                        to_bson::<Option<ObjectId>>(&None).unwrap()
+                    ]
+                },
+                "status": "$status",
+                "volume": "$volume",
+                "value": "$value",
+            }
+        });
+
+        if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
+            let mut tasks: Vec<ProjectTaskMinResponse> = Vec::<ProjectTaskMinResponse>::new();
+            while let Some(Ok(doc)) = cursor.next().await {
+                let task: ProjectTaskMinResponse =
+                    from_document::<ProjectTaskMinResponse>(doc).unwrap();
+                tasks.push(task);
+            }
+            if !tasks.is_empty() {
+                if !dependencies.is_empty() {
+                    for task in tasks.iter_mut() {
+                        let mut _id = task.task_id;
+                        let mut found = true;
+                        while found {
+                            if let Some(task_id) = _id {
+                                if let Some(index) =
+                                    dependencies.iter().position(|a| a._id.unwrap() == task_id)
+                                {
+                                    task.value *= dependencies[index].value / 100.0;
+                                    _id = dependencies[index].task_id;
+                                }
+                            } else {
+                                found = false;
+                            }
+                        }
+                    }
+                }
+
+                Ok(Some(tasks))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Err("PROJECT_TASK_NOT_FOUND".to_string())
+        }
+    }
+    pub async fn find_many_area(
+        project_id: &ObjectId,
+    ) -> Result<Option<Vec<ProjectAreaResponse>>, String> {
+        let db: Database = get_db();
+        let collection: Collection<Project> = db.collection::<Project>("projects");
+
+        let pipeline: Vec<mongodb::bson::Document> = vec![
+            doc! {
+                "$match": {
+                    "$expr": {
+                        "$eq": [ "$_id", to_bson::<ObjectId>(&project_id).unwrap() ]
+                    }
+                }
+            },
+            doc! {
+                "$lookup": {
+                    "from": "project-tasks",
+                    "let": {
+                        "project_id": "$_id",
+                    },
+                    "as": "tasks",
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {
+                                    "$and": [
+                                        {
+                                            "$eq": ["$project_id", "$$project_id"]
+                                        },
+                                        {
+                                            "$eq": ["$task_id", to_bson::<Option<ObjectId>>(&None).unwrap()]
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "$lookup": {
+                                "from": "users",
+                                "let": {
+                                    "user_id": {
+                                        "$cond": ["$user_id", "$user_id", []]
+                                    }
+                                },
+                                "as": "user",
+                                "pipeline": [
+                                    {
+                                        "$match": {
+                                            "$expr": {
+                                                "$in": ["$_id", "$$user_id"]
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "$project": {
+                                            "_id": {
+                                                "$toString": "$_id"
+                                            },
+                                            "name": "$name",
+                                            "image": "$image",
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "$lookup": {
+                                "from": "project-tasks",
+                                "let": {
+                                    "task_id": "$_id"
+                                },
+                                "as": "task",
+                                "pipeline": [
+                                    {
+                                        "$match": {
+                                            "$expr": {
+                                                "$eq": ["$task_id", "$$task_id"]
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "$project": {
+                                            "_id": {
+                                                "$toString": "$_id"
+                                            },
+                                            "name": "$name",
+                                            "period": {
+                                                "$cond": [
+                                                    "$period",
+                                                    {
+                                                        "start": {
+                                                            "$toString": "$period.start"
+                                                        },
+                                                        "end": {
+                                                            "$toString": "$period.end"
+                                                        },
+                                                    },
+                                                    to_bson::<Option<ObjectId>>(&None).unwrap()
+                                                ]
+                                            },
+                                            "status": "$status",
+                                            "volume": "$volume",
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "$project": {
+                                "_id": {
+                                    "$toString": "$_id"
+                                },
+                                "area_id": "$area_id",
+                                "task_id": "$task_id",
+                                "user": "$user",
+                                "task": "$task",
+                                "name": "$name",
+                                "period": {
+                                    "$cond": [
+                                        "$period",
+                                        {
+                                            "start": {
+                                                "$toString": "$period.start"
+                                            },
+                                            "end": {
+                                                "$toString": "$period.end"
+                                            },
+                                        },
+                                        to_bson::<Option<ObjectId>>(&None).unwrap()
+                                    ]
+                                },
+                                "status": "$status",
+                                "volume": "$volume",
+                                "value": "$value",
+                            }
+                        },
+                    ]
+                }
+            },
+            doc! {
+                "$project": {
+                    "area": {
+                        "$map": {
+                            "input": "$area",
+                            "in": {
+                                "_id": {
+                                    "$toString": "$$this._id"
+                                },
+                                "name": "$$this.name",
+                                "task": {
+                                    "$filter": {
+                                        "input": "$tasks",
+                                        "as": "task",
+                                        "cond": {
+                                            "$eq": ["$$this._id", "$$task.area_id"]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                }
+            },
+            doc! {
+                "$unwind": "$area"
+            },
+            doc! {
+                "$project": {
+                    "_id": "$area._id",
+                    "name": "$area.name",
+                    "task": "$area.task",
+                }
+            },
+        ];
+        let mut areas: Vec<ProjectAreaResponse> = Vec::new();
+
+        match collection.aggregate(pipeline, None).await {
+            Ok(mut cursor) => {
+                while let Some(Ok(doc)) = cursor.next().await {
+                    let area: ProjectAreaResponse =
+                        from_document::<ProjectAreaResponse>(doc).unwrap();
+                    areas.push(area);
+                }
+                if !areas.is_empty() {
+                    Ok(Some(areas))
+                } else {
+                    Err("PROJECT_TASK_NOT_FOUND".to_string())
+                }
+            }
+            Err(_) => Err("PROJECT_TASK_NOT_FOUND".to_string()),
         }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<ProjectTask>, String> {

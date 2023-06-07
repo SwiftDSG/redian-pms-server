@@ -55,6 +55,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         name: payload.name,
         email: payload.email,
         password: payload.password,
+        image: None,
     };
 
     if (User::find_many(&UserQuery {
