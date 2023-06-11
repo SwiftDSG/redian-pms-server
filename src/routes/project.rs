@@ -22,6 +22,7 @@ use actix_multipart::form::MultipartForm;
 use actix_web::{get, post, put, web, HttpMessage, HttpRequest, HttpResponse};
 use chrono::Utc;
 use mongodb::bson::{doc, oid::ObjectId, to_bson, DateTime};
+use serde::Deserialize;
 
 use crate::models::{
     project::{
@@ -33,7 +34,7 @@ use crate::models::{
     },
     project_progress_report::{
         ProjectProgressReport, ProjectProgressReportDocumentationRequest,
-        ProjectProgressReportRequest,
+        ProjectProgressReportQuery, ProjectProgressReportRequest,
     },
     project_role::{ProjectRole, ProjectRolePermission, ProjectRoleRequest},
     project_task::{
@@ -44,6 +45,11 @@ use crate::models::{
     role::{Role, RolePermission},
     user::UserAuthentication,
 };
+
+#[derive(Deserialize, Clone)]
+pub struct ProjectTaskQueryParams {
+    status: Option<ProjectTaskStatusKind>,
+}
 
 // #[delete("/projects/{_id}")]
 // pub async fn delete_project(_id: web::Path<String>) -> HttpResponse {
@@ -97,7 +103,10 @@ pub async fn get_project_areas(project_id: web::Path<String>) -> HttpResponse {
     }
 }
 #[get("/projects/{project_id}/tasks")]
-pub async fn get_project_tasks(project_id: web::Path<String>) -> HttpResponse {
+pub async fn get_project_tasks(
+    project_id: web::Path<String>,
+    query: web::Query<ProjectTaskQueryParams>,
+) -> HttpResponse {
     let project_id: ObjectId = match project_id.parse() {
         Ok(project_id) => project_id,
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
@@ -105,6 +114,7 @@ pub async fn get_project_tasks(project_id: web::Path<String>) -> HttpResponse {
 
     match ProjectTask::find_many_timeline(&ProjectTaskTimelineQuery {
         area_id: None,
+        status: query.status.clone(),
         project_id,
     })
     .await
@@ -123,6 +133,7 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
 
     let mut bases: Vec<ProjectTask> = Vec::new();
     let mut dependencies: Vec<ProjectTask> = Vec::new();
+    let mut progresses: Vec<ProjectProgressReport> = Vec::new();
 
     if let Ok(Some(tasks)) = ProjectTask::find_many(&ProjectTaskQuery {
         _id: None,
@@ -147,6 +158,14 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
     .await
     {
         dependencies = tasks;
+    }
+    if let Ok(Some(reports)) = ProjectProgressReport::find_many(ProjectProgressReportQuery {
+        project_id: project_id.clone(),
+        area_id: None,
+    })
+    .await
+    {
+        progresses = reports;
     }
 
     if !bases.is_empty() && !dependencies.is_empty() {
@@ -190,13 +209,14 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
 
     let mut datas: Vec<ProjectProgressResponse> = vec![ProjectProgressResponse {
         x: start_milis - 86400000,
-        y: vec![0.0],
+        y: vec![0.0, 0.0],
     }];
 
     for i in 0..diff {
         let date = start_milis + i * 86400000;
-        let prev_y = datas.last().map_or_else(|| 0.0, |v| *v.y.get(0).unwrap());
-        let mut y: f64 = bases
+        let prev_y1 = datas.last().map_or_else(|| 0.0, |v| *v.y.get(0).unwrap());
+        let prev_y2 = datas.last().map_or_else(|| 0.0, |v| *v.y.get(1).unwrap());
+        let mut y1: f64 = bases
             .iter()
             .filter(|a| {
                 if let Some(period) = a.period.as_ref() {
@@ -207,22 +227,59 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
                     false
                 }
             })
-            .fold(prev_y, |a, b| {
+            .fold(prev_y1, |a, b| {
                 let period = b.period.as_ref().unwrap();
                 let start = period.start.timestamp_millis();
                 let end = period.end.timestamp_millis();
                 let diff = (end - start) / 86400000 + 1;
                 a + (b.value / (diff as f64))
             });
+        let mut y2 = progresses
+            .iter()
+            .filter(|a| {
+                println!("CURRENT DATE     : {:#?}", date);
+                println!("REPORT DATE      : {:#?}", a.date.timestamp_millis());
+                println!("DIV CURRENT DATE : {:#?}", date / 86400000);
+                println!(
+                    "DIV REPORT DATE  : {:#?}",
+                    a.date.timestamp_millis() / 86400000
+                );
+                date / 86400000 == a.date.timestamp_millis() / 86400000
+            })
+            .fold(prev_y2, |a, b| {
+                if let Some(actual) = &b.actual {
+                    let progress = actual.iter().fold(0.0, |c, d| {
+                        if let Some(index) = bases.iter().position(|e| e._id.unwrap() == d.task_id)
+                        {
+                            println!("DEPENDENCY INDEX   :{:#?}", index);
+                            c + d.value * bases[index].value / 100.0
+                        } else {
+                            c
+                        }
+                    });
+                    println!("ACTUAL   :{:#?}", actual);
+                    println!("PROGRESS :{:#?}", progress);
+                    println!("=================================");
+                    a + progress
+                } else {
+                    a
+                }
+            });
 
-        if y >= 99.99 {
-            y = 100.0
+        if y1 >= 99.99 {
+            y1 = 100.0
+        }
+        if y2 >= 99.99 {
+            y2 = 100.0
         }
 
         let data = ProjectProgressResponse {
             x: date,
-            y: vec![y],
+            y: vec![y1, y2],
         };
+
+        println!("{:#?}", y2);
+        println!("");
 
         datas.push(data);
     }

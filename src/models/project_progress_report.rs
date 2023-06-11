@@ -1,8 +1,9 @@
 use crate::database::get_db;
 
 use actix_multipart::form::{tempfile::TempFile, MultipartForm};
+use futures::stream::StreamExt;
 use mongodb::{
-    bson::{doc, oid::ObjectId, to_bson, DateTime},
+    bson::{doc, from_document, oid::ObjectId, to_bson, DateTime, Document},
     Collection, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -26,7 +27,7 @@ pub struct ProjectProgressReport {
     pub _id: Option<ObjectId>,
     pub project_id: ObjectId,
     pub date: DateTime,
-    pub time: [[usize; 2]; 2],
+    pub time: Option<[[usize; 2]; 2]>,
     pub actual: Option<Vec<ProjectProgressReportActual>>,
     pub plan: Option<Vec<ProjectProgressReportPlan>>,
     pub documentation: Option<Vec<ProjectProgressReportDocumentation>>,
@@ -52,9 +53,15 @@ pub struct ProjectProgressReportWeather {
     pub time: [usize; 2],
     pub kind: ProjectProgressReportWeatherKind,
 }
+
+pub struct ProjectProgressReportQuery {
+    pub project_id: ObjectId,
+    pub area_id: Option<ObjectId>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectProgressReportRequest {
-    pub time: [[usize; 2]; 2],
+    pub time: Option<[[usize; 2]; 2]>,
     pub actual: Option<Vec<ProjectProgressReportActual>>,
     pub plan: Option<Vec<ProjectProgressReportPlan>>,
     pub weather: Option<Vec<ProjectProgressReportWeather>>,
@@ -77,14 +84,16 @@ impl ProjectProgressReport {
             .map_err(|_| "PROJECT_NOT_FOUND".to_string())?
             .ok_or_else(|| "PROJECT_NOT_FOUND".to_string())?;
 
-        let (start_time, end_time) = (self.time[0], self.time[1]);
-        if start_time[0] > 23
-            || start_time[1] > 59
-            || end_time[0] > 23
-            || end_time[1] > 59
-            || (start_time[0] * 60 + start_time[1]) >= (end_time[0] * 60 + end_time[1])
-        {
-            return Err("PROJECT_REPORT_TIME_INVALID".to_string());
+        if let Some(time) = self.time {
+            let (start_time, end_time) = (time[0], time[1]);
+            if start_time[0] > 23
+                || start_time[1] > 59
+                || end_time[0] > 23
+                || end_time[1] > 59
+                || (start_time[0] * 60 + start_time[1]) >= (end_time[0] * 60 + end_time[1])
+            {
+                return Err("PROJECT_REPORT_TIME_INVALID".to_string());
+            }
         }
 
         if let Some(documentation) = self.documentation.as_mut() {
@@ -102,7 +111,7 @@ impl ProjectProgressReport {
                         continue;
                     }
                     let remain = 100.0 - task.progress;
-                    if remain <= actual_task.value {
+                    if (remain - actual_task.value).abs() <= 0.001 {
                         actual_task.value = remain;
                         let mut task = ProjectTask::find_by_id(&actual_task.task_id)
                             .await
@@ -184,6 +193,44 @@ impl ProjectProgressReport {
             .find_one(doc! { "_id": _id }, None)
             .await
             .map_err(|_| "PROJECT_REPORT_NOT_FOUND".to_string())
+    }
+    pub async fn find_many(
+        query: ProjectProgressReportQuery,
+    ) -> Result<Option<Vec<ProjectProgressReport>>, String> {
+        let db: Database = get_db();
+        let collection: Collection<ProjectProgressReport> =
+            db.collection::<ProjectProgressReport>("project-reports");
+
+        let mut pipeline: Vec<Document> = Vec::<Document>::new();
+        let mut queries: Vec<Document> = Vec::<Document>::new();
+
+        queries.push(doc! {
+            "$eq": [ "$project_id", to_bson::<ObjectId>(&query.project_id).unwrap() ]
+        });
+
+        pipeline.push(doc! {
+            "$match": {
+                "$expr": {
+                    "$and": queries
+                }
+            }
+        });
+
+        if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
+            let mut reports: Vec<ProjectProgressReport> = Vec::<ProjectProgressReport>::new();
+            while let Some(Ok(doc)) = cursor.next().await {
+                let report: ProjectProgressReport =
+                    from_document::<ProjectProgressReport>(doc).unwrap();
+                reports.push(report);
+            }
+            if !reports.is_empty() {
+                Ok(Some(reports))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Err("PROJECT_TASK_NOT_FOUND".to_string())
+        }
     }
     pub async fn delete_by_id(_id: &ObjectId) -> Result<u64, String> {
         let db: Database = get_db();

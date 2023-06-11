@@ -87,9 +87,11 @@ pub struct ProjectTaskMinResponse {
     pub task: Option<Vec<ProjectTaskTaskResponse>>,
     pub name: String,
     pub period: Option<ProjectTaskPeriodResponse>,
+    pub actual: Option<ProjectTaskPeriodResponse>,
     pub status: Vec<ProjectTaskStatus>,
     pub volume: Option<ProjectTaskVolume>,
     pub value: f64,
+    pub progress: f64,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectTaskTaskResponse {
@@ -132,6 +134,7 @@ pub struct ProjectTaskQuery {
 pub struct ProjectTaskTimelineQuery {
     pub project_id: ObjectId,
     pub area_id: Option<ObjectId>,
+    pub status: Option<ProjectTaskStatusKind>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -497,6 +500,16 @@ impl ProjectTask {
                 "$eq": [ "$area_id", to_bson::<ObjectId>(&_id).unwrap() ]
             });
         }
+        if let Some(status) = query.status.clone() {
+            queries.push(doc! {
+                "$ne": [
+                    {
+                        "$arrayElemAt": ["$status.kind", 0]
+                    },
+                    to_bson::<ProjectTaskStatusKind>(&status).unwrap()
+                ]
+            });
+        }
 
         pipeline.push(doc! {
             "$match": {
@@ -505,7 +518,85 @@ impl ProjectTask {
                 }
             }
         });
-
+        pipeline.push(doc! {
+            "$lookup": {
+                "from": "project-reports",
+                "let": {
+                    "task_id": "$_id"
+                },
+                "as": "progress",
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$in": ["$$task_id", "$actual.task_id"]
+                            }
+                        }
+                    },
+                    {
+                        "$unwind": "$actual"
+                    },
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$eq": ["$$task_id", "$actual.task_id"]
+                            }
+                        }
+                    },
+                    {
+                        "$group": {
+                            "_id": "$actual.task_id",
+                            "value": {
+                                "$sum": "$actual.value"
+                            }
+                        }
+                    }
+                ]
+            }
+        });
+        pipeline.push(doc! {
+            "$lookup": {
+                "from": "project-reports",
+                "let": {
+                    "task_id": "$_id"
+                },
+                "as": "actual",
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$in": ["$$task_id", "$actual.task_id"]
+                            }
+                        }
+                    },
+                    {
+                        "$unwind": "$actual"
+                    },
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$eq": ["$$task_id", "$actual.task_id"]
+                            }
+                        }
+                    },
+                    {
+                        "$group": {
+                            "_id": "$actual.task_id",
+                            "start": {
+                                "$min": {
+                                    "$toLong": "$date"
+                                }
+                            },
+                            "end": {
+                                "$max": {
+                                    "$toLong": "$date"
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        });
         pipeline.push(doc! {
             "$project": {
                 "_id": {
@@ -529,11 +620,88 @@ impl ProjectTask {
                         to_bson::<Option<ObjectId>>(&None).unwrap()
                     ]
                 },
+                "actual": {
+                    "$cond": [
+                        {
+                            "$gt": [
+                                {
+                                    "$size": "$actual"
+                                },
+                                0
+                            ]
+                        },
+                        {
+                            "start": {
+                                "$toString": {
+                                    "$toDate": {
+                                        "$first": "$actual.start"
+                                    }
+                                }
+                            },
+                            "end": {
+                                "$cond": [
+                                    {
+                                        "$or": [
+                                            {
+                                                "$eq": [
+                                                    {
+                                                        "$first": "$status.kind"
+                                                    },
+                                                    to_bson::<ProjectTaskStatusKind>(&ProjectTaskStatusKind::Running).unwrap()
+                                                ]
+                                            },
+                                            {
+                                                "$eq": [
+                                                    {
+                                                        "$first": "$status.kind"
+                                                    },
+                                                    to_bson::<ProjectTaskStatusKind>(&ProjectTaskStatusKind::Paused).unwrap()
+                                                ]
+                                            },
+                                        ]
+                                    },
+                                    {
+                                        "$toString": {
+                                            "$toDate": Utc::now().timestamp_millis()
+                                        }
+                                    },
+                                    {
+                                        "$toString": {
+                                            "$toDate": {
+                                                "$first": "$actual.end"
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                        },
+                        to_bson::<Option<ObjectId>>(&None).unwrap()
+                    ]
+                },
                 "status": "$status",
                 "volume": "$volume",
                 "value": "$value",
+                "progress": {
+                    "$cond": [
+                        {
+                            "$gt": [
+                                { "$size": "$progress" },
+                                0
+                            ]
+                        },
+                        {
+                            "$first": "$progress.value"
+                        },
+                        0.0
+                    ]
+                }
             }
         });
+
+        match collection.aggregate(pipeline.clone(), None).await {
+            Ok(_) => (),
+            Err(error) => println!("{:#?}", error),
+        };
 
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             let mut tasks: Vec<ProjectTaskMinResponse> = Vec::<ProjectTaskMinResponse>::new();
@@ -678,6 +846,42 @@ impl ProjectTask {
                             }
                         },
                         {
+                            "$lookup": {
+                                "from": "project-reports",
+                                "let": {
+                                    "task_id": "$_id"
+                                },
+                                "as": "progress",
+                                "pipeline": [
+                                    {
+                                        "$match": {
+                                            "$expr": {
+                                                "$in": ["$$task_id", "$actual.task_id"]
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "$unwind": "$actual"
+                                    },
+                                    {
+                                        "$match": {
+                                            "$expr": {
+                                                "$eq": ["$$task_id", "$actual.task_id"]
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "$group": {
+                                            "_id": "$actual.task_id",
+                                            "value": {
+                                                "$sum": "$actual.value"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
                             "$project": {
                                 "_id": {
                                     "$toString": "$_id"
@@ -704,6 +908,20 @@ impl ProjectTask {
                                 "status": "$status",
                                 "volume": "$volume",
                                 "value": "$value",
+                                "progress": {
+                                    "$cond": [
+                                        {
+                                            "$gt": [
+                                                { "$size": "$progress" },
+                                                0
+                                            ]
+                                        },
+                                        {
+                                            "$first": "$progress.value"
+                                        },
+                                        0.0
+                                    ]
+                                }
                             }
                         },
                     ]
@@ -845,76 +1063,23 @@ impl ProjectTask {
                             },
                         },
                         {
-                            "$lookup": {
-                                "from": "project-reports",
-                                "as": "report",
-                                "let": {
-                                    "sub_task_id": "$_id"
-                                },
-                                "pipeline": [
-                                    {
-                                        "$match": {
-                                            "$expr": {
-                                                "$in": ["$$sub_task_id", "$actual.task_id"]
-                                            }
-                                        },
-                                    },
-                                    {
-                                        "$group": {
-                                            "_id": to_bson::<Option<String>>(&Option::<String>::None).unwrap(),
-                                            "progress": {
-                                                "$sum": {
-                                                    "$cond": [
-                                                        {
-                                                            "$gte": [
-                                                                {
-                                                                    "$indexOfArray": ["$actual.task_id", "$$sub_task_id"]
-                                                                },
-                                                                0
-                                                            ]
-                                                        },
-                                                        {
-                                                            "$arrayElemAt": [
-                                                                "$actual.value",
-                                                                {
-                                                                    "$indexOfArray": ["$actual.task_id", "$$sub_task_id"]
-                                                                }
-                                                            ]
-                                                        },
-                                                        0
-                                                    ]
-                                                }
-                                            }
-                                        }
-                                    }
-                                ]
-                            }
-                        },
-                        {
                             "$project": {
+                                "_id": {
+                                    "$toString": "$_id"
+                                },
                                 "name": "$name",
-                                "period": "$period",
-                                "status": "$status",
-                                "volume": "$volume",
-                                "progress": {
+                                "period": {
                                     "$cond": [
+                                        { "$ne": ["$period", to_bson::<Option<ObjectId>>(&None).unwrap()] },
                                         {
-                                            "$gt": [
-                                                {
-                                                    "$size": "$report"
-                                                },
-                                                0
-                                            ]
+                                            "start": { "$toString": "$period.start" },
+                                            "end": { "$toString": "$period.end" },
                                         },
-                                        {
-                                            "$arrayElemAt": [
-                                                "$report.progress",
-                                                0
-                                            ]
-                                        },
-                                        0
+                                        to_bson::<Option<ObjectId>>(&None).unwrap()
                                     ]
                                 },
+                                "status": "$status",
+                                "volume": "$volume"
                             }
                         }
                     ]
@@ -938,19 +1103,19 @@ impl ProjectTask {
                         },
                         {
                             "$project": {
+                                "_id": {
+                                    "$toString": "$_id"
+                                },
                                 "name": "$name",
                                 "area": {
-                                    "$arrayElemAt": [
-                                        {
-                                            "$filter": {
-                                                "input": "$area",
-                                                "cond": {
-                                                    "$eq": ["$$this._id", "$$area_id"]
-                                                }
+                                    "$first": {
+                                        "$filter": {
+                                            "input": "$area",
+                                            "cond": {
+                                                "$eq": ["$$this._id", "$$area_id"]
                                             }
-                                        },
-                                        0
-                                    ]
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -959,18 +1124,23 @@ impl ProjectTask {
             },
             doc! {
                 "$project": {
+                    "_id": {
+                        "$toString": "$_id"
+                    },
                     "project": {
-                        "$arrayElemAt": ["$project", 0]
+                        "$first": "$project"
                     },
                     "area": {
                         "_id": {
-                            "$arrayElemAt": ["$project.area._id", 0]
+                            "$toString": {
+                                "$first": "$project.area._id"
+                            }
                         },
                         "name": {
-                            "$arrayElemAt": ["$project.area.name", 0]
+                            "$first": "$project.area.name"
                         },
                     },
-                    "sub_task": {
+                    "task": {
                         "$cond": [
                             {
                                 "$gt": [
@@ -985,7 +1155,17 @@ impl ProjectTask {
                         ]
                     },
                     "name": "$name",
-                    "period": "$period",
+                    "description": "$description",
+                    "period": {
+                        "$cond": [
+                            { "$ne": ["$period", to_bson::<Option<ObjectId>>(&None).unwrap()] },
+                            {
+                                "start": { "$toString": "$period.start" },
+                                "end": { "$toString": "$period.end" },
+                            },
+                            to_bson::<Option<ObjectId>>(&None).unwrap()
+                        ]
+                    },
                     "status": "$status",
                     "volume": "$volume",
                     "value": "$value",
@@ -993,17 +1173,12 @@ impl ProjectTask {
                         "$cond": [
                             {
                                 "$gt": [
-                                    {
-                                        "$size": "$report"
-                                    },
+                                    { "$size": "$report" },
                                     0
                                 ]
                             },
                             {
-                                "$arrayElemAt": [
-                                    "$report.progress",
-                                    0
-                                ]
+                                "$first": "$report.progress"
                             },
                             0
                         ]
