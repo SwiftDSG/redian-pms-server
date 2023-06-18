@@ -51,7 +51,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
 
     let mut user: User = User {
         _id: None,
-        role: Vec::<ObjectId>::new(),
+        role_id: Vec::<ObjectId>::new(),
         name: payload.name,
         email: payload.email,
         password: payload.password,
@@ -67,7 +67,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         .is_ok()
     {
         let issuer_role = match req.extensions().get::<UserAuthentication>() {
-            Some(issuer) => issuer.role.clone(),
+            Some(issuer) => issuer.role_id.clone(),
             None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
         };
         if issuer_role.is_empty()
@@ -76,22 +76,10 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
             return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
         }
 
-        // let issuer_role: Vec<ObjectId>;
-        // if let Some(issuer) = req.extensions().get::<UserAuthentication>().cloned() {
-        //     issuer_role = issuer.role.clone();
-        // } else {
-        //     return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        // }
-        // if issuer_role.is_empty()
-        //     || !Role::validate(&issuer_role, &RolePermission::CreateUser).await
-        // {
-        //     return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-        // }
-
-        if let Some(roles) = payload.role {
+        if let Some(roles) = payload.role_id {
             for i in roles.iter() {
                 if let Ok(Some(_)) = Role::find_by_id(i).await {
-                    user.role.push(*i);
+                    user.role_id.push(*i);
                 }
             }
         } else {
@@ -108,7 +96,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         };
         role.set_as_owner();
         if let Ok(_id) = role.save().await {
-            user.role = vec![_id];
+            user.role_id = vec![_id];
         } else {
             return HttpResponse::BadRequest().body("UNABLE_TO_CREATE_ROLE".to_string());
         }

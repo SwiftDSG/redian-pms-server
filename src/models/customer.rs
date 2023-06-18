@@ -43,10 +43,19 @@ pub struct CustomerRequest {
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CustomerResponse {
-    pub _id: Option<ObjectId>,
+    pub _id: String,
     pub name: String,
     pub contact: CustomerContact,
-    pub person: Vec<CustomerPerson>,
+    pub person: Vec<CustomerPersonResponse>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CustomerPersonResponse {
+    pub _id: String,
+    pub name: String,
+    pub address: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub role: String,
 }
 
 impl Customer {
@@ -81,9 +90,26 @@ impl Customer {
 
         pipeline.push(doc! {
           "$project": {
+            "_id": {
+                "$toString": "$_id"
+            },
             "name" : "$name",
             "contact" : "$contact",
-            "person" : "$person",
+            "person" : {
+                "$map": {
+                    "input": "$person",
+                    "in": {
+                        "_id": {
+                            "$toString": "$$this._id"
+                        },
+                        "name" : "$$this.name",
+                        "address" : "$$this.address",
+                        "phone" : "$$this.phone",
+                        "email" : "$$this.email",
+                        "role" : "$$this.role",
+                    }
+                }
+            },
           }
         });
 

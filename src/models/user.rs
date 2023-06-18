@@ -35,10 +35,10 @@ struct UserClaim {
 pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _id: Option<ObjectId>,
+    pub role_id: Vec<ObjectId>,
     pub name: String,
     pub email: String,
     pub password: String,
-    pub role: Vec<ObjectId>,
     pub image: Option<UserImage>,
 }
 #[derive(Debug, Deserialize, Serialize)]
@@ -63,22 +63,22 @@ pub struct UserQuery {
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserRequest {
+    pub role_id: Option<Vec<ObjectId>>,
     pub name: String,
     pub email: String,
     pub password: String,
-    pub role: Option<Vec<ObjectId>>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserResponse {
     pub _id: Option<ObjectId>,
+    pub role_id: Vec<ObjectId>,
     pub name: String,
     pub email: String,
-    pub role: Vec<ObjectId>,
 }
 #[derive(Debug)]
 pub struct UserAuthenticationData {
     pub _id: Option<ObjectId>,
-    pub role: Vec<ObjectId>,
+    pub role_id: Vec<ObjectId>,
     pub token: String,
 }
 pub struct UserAuthenticationMiddleware<S> {
@@ -300,7 +300,7 @@ where
                     if let Ok(Some(user)) = User::find_by_id(&_id).await {
                         let auth_data: UserAuthenticationData = UserAuthenticationData {
                             _id: Some(_id),
-                            role: user.role,
+                            role_id: user.role_id,
                             token,
                         };
                         req.extensions_mut()

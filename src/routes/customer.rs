@@ -38,7 +38,7 @@ pub async fn create_customer(
     req: HttpRequest,
 ) -> HttpResponse {
     let issuer_role = match req.extensions().get::<UserAuthentication>() {
-        Some(issuer) => issuer.role.clone(),
+        Some(issuer) => issuer.role_id.clone(),
         None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
     };
     if issuer_role.is_empty()
@@ -66,7 +66,7 @@ pub async fn update_customer(
     req: HttpRequest,
 ) -> HttpResponse {
     let issuer_role = match req.extensions().get::<UserAuthentication>() {
-        Some(issuer) => issuer.role.clone(),
+        Some(issuer) => issuer.role_id.clone(),
         None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
     };
     if issuer_role.is_empty()
@@ -99,7 +99,7 @@ pub async fn update_customer(
 #[delete("/customers/{customer_id}")]
 pub async fn delete_customer(customer_id: web::Path<String>, req: HttpRequest) -> HttpResponse {
     let issuer_role = match req.extensions().get::<UserAuthentication>() {
-        Some(issuer) => issuer.role.clone(),
+        Some(issuer) => issuer.role_id.clone(),
         None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
     };
     if issuer_role.is_empty()

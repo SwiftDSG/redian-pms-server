@@ -19,15 +19,16 @@ use std::{
 };
 
 use actix_multipart::form::MultipartForm;
-use actix_web::{get, post, put, web, HttpMessage, HttpRequest, HttpResponse};
+use actix_web::{delete, get, post, put, web, HttpMessage, HttpRequest, HttpResponse};
 use chrono::Utc;
 use mongodb::bson::{doc, oid::ObjectId, to_bson, DateTime};
 use serde::Deserialize;
 
 use crate::models::{
     project::{
-        Project, ProjectAreaRequest, ProjectMember, ProjectMemberKind, ProjectProgressResponse,
-        ProjectQuery, ProjectRequest, ProjectStatus, ProjectStatusKind,
+        Project, ProjectAreaRequest, ProjectMember, ProjectMemberKind, ProjectPeriod,
+        ProjectProgressGraphResponse, ProjectQuery, ProjectRequest, ProjectStatus,
+        ProjectStatusKind,
     },
     project_incident_report::{
         ProjectIncidentReport, ProjectIncidentReportRequest, ProjectIncidentReportRequestQuery,
@@ -50,19 +51,6 @@ use crate::models::{
 pub struct ProjectTaskQueryParams {
     status: Option<ProjectTaskStatusKind>,
 }
-
-// #[delete("/projects/{_id}")]
-// pub async fn delete_project(_id: web::Path<String>) -> HttpResponse {
-//     let _id: String = _id.into_inner();
-//     if let Ok(_id) = ObjectId::from_str(&_id) {
-//         return match Project::delete_by_id(&_id).await {
-//             Ok(count) => HttpResponse::Ok().body(format!("Deleted {count} project")),
-//             Err(error) => HttpResponse::InternalServerError().body(error),
-//         };
-//     } else {
-//         HttpResponse::BadRequest().body("INVALID_ID".to_string())
-//     }
-// }
 
 #[get("/projects")]
 pub async fn get_projects() -> HttpResponse {
@@ -124,6 +112,27 @@ pub async fn get_project_tasks(
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
+#[get("/projects/{project_id}/tasks/{task_id}")]
+pub async fn get_project_task(_id: web::Path<(String, String)>, req: HttpRequest) -> HttpResponse {
+    let (project_id, task_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(task_id)) => (project_id, task_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::GetTask).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    match ProjectTask::find_detail_by_id(&task_id).await {
+        Ok(Some(project)) => HttpResponse::Ok().json(project),
+        Ok(None) => HttpResponse::NotFound().body("PROJECT_TASK_NOT_FOUND".to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
 #[get("/projects/{project_id}/progress")]
 pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse {
     let project_id: ObjectId = match project_id.parse() {
@@ -160,7 +169,7 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
         dependencies = tasks;
     }
     if let Ok(Some(reports)) = ProjectProgressReport::find_many(ProjectProgressReportQuery {
-        project_id: project_id.clone(),
+        project_id,
         area_id: None,
     })
     .await
@@ -207,15 +216,15 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
         }
     }
 
-    let mut datas: Vec<ProjectProgressResponse> = vec![ProjectProgressResponse {
+    let mut datas: Vec<ProjectProgressGraphResponse> = vec![ProjectProgressGraphResponse {
         x: start_milis - 86400000,
         y: vec![0.0, 0.0],
     }];
 
     for i in 0..diff {
         let date = start_milis + i * 86400000;
-        let prev_y1 = datas.last().map_or_else(|| 0.0, |v| *v.y.get(0).unwrap());
-        let prev_y2 = datas.last().map_or_else(|| 0.0, |v| *v.y.get(1).unwrap());
+        let prev_y1 = datas.last().map_or_else(|| 0.0, |v| *v.y.first().unwrap());
+        let prev_y2 = datas.last().map_or_else(|| 0.0, |v| *v.y.last().unwrap());
         let mut y1: f64 = bases
             .iter()
             .filter(|a| {
@@ -273,7 +282,7 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
             y2 = 100.0
         }
 
-        let data = ProjectProgressResponse {
+        let data = ProjectProgressGraphResponse {
             x: date,
             y: vec![y1, y2],
         };
@@ -286,24 +295,46 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
 
     HttpResponse::Ok().json(datas)
 }
+#[get("/projects/{project_id}/members")]
+pub async fn get_project_members(project_id: web::Path<String>) -> HttpResponse {
+    let project_id: ObjectId = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    match Project::find_users(&project_id).await {
+        Ok(Some(users)) => HttpResponse::Ok().json(users),
+        Ok(None) => HttpResponse::NotFound().body("PROJECT_USER_NOT_FOUND".to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
 #[post("/projects")] // FINISHED
 pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest) -> HttpResponse {
     let issuer = match req.extensions().get::<UserAuthentication>() {
         Some(issuer) => issuer.clone(),
         None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
     };
-    if issuer.role.is_empty() || !Role::validate(&issuer.role, &RolePermission::CreateProject).await
+    if issuer.role_id.is_empty()
+        || !Role::validate(&issuer.role_id, &RolePermission::CreateProject).await
     {
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
 
     let payload: ProjectRequest = payload.into_inner();
 
+    if payload.period.start >= payload.period.end {
+        return HttpResponse::BadRequest().body("INVALID_PERIOD".to_string());
+    }
+
     let mut project: Project = Project {
         _id: None,
         customer_id: payload.customer_id,
         name: payload.name,
         code: payload.code,
+        period: ProjectPeriod {
+            start: DateTime::from_millis(payload.period.start),
+            end: DateTime::from_millis(payload.period.end),
+        },
         status: vec![ProjectStatus {
             kind: ProjectStatusKind::Pending,
             time: DateTime::from_millis(Utc::now().timestamp_millis()),
@@ -870,6 +901,39 @@ pub async fn add_project_area(
         match project.add_area(&[payload]).await {
             Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
             Err(error) => HttpResponse::InternalServerError().body(error),
+        }
+    } else {
+        HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
+    }
+}
+#[delete("/projects/{project_id}/areas/{area_id}")]
+pub async fn delete_project_area(
+    _id: web::Path<(String, String)>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let (project_id, area_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(area_id)) => (project_id, area_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    println!("{:#?}", project_id);
+
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    if let Ok(Some(mut project)) = Project::find_by_id(&project_id).await {
+        if let Ok(_) = ProjectTask::delete_many_by_area_id(&area_id).await {
+            match project.remove_area(&area_id).await {
+                Ok(_id) => HttpResponse::Ok().body(_id.to_string()),
+                Err(error) => HttpResponse::InternalServerError().body(error),
+            }
+        } else {
+            HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
         }
     } else {
         HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())

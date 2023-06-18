@@ -66,7 +66,9 @@ async fn main() -> io::Result<()> {
             .service(routes::project::get_project)
             .service(routes::project::get_project_areas)
             .service(routes::project::get_project_tasks)
+            .service(routes::project::get_project_task)
             .service(routes::project::get_project_progress)
+            .service(routes::project::get_project_members)
             .service(routes::project::create_project)
             .service(routes::project::create_project_role)
             .service(routes::project::create_project_task)
@@ -79,6 +81,7 @@ async fn main() -> io::Result<()> {
             .service(routes::project::update_project_report)
             .service(routes::project::add_project_member)
             .service(routes::project::add_project_area)
+            .service(routes::project::delete_project_area)
     })
     .bind(("127.0.0.1", 8000))?
     .workers(8)

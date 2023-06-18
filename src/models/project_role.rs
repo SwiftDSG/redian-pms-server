@@ -31,11 +31,20 @@ pub struct ProjectRole {
     pub name: String,
     pub permission: Vec<ProjectRolePermission>,
 }
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectRoleRequest {
     pub name: String,
     pub permission: Vec<ProjectRolePermission>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectRoleResponse {
+    pub _id: String,
+    pub name: String,
+    pub permission: Vec<ProjectRolePermission>,
+}
+#[derive(Debug)]
+pub struct ProjectRoleQuery {
+    pub project_id: Option<ObjectId>,
 }
 
 impl ProjectRole {

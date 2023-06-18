@@ -70,6 +70,7 @@ pub struct ProjectTaskResponse {
     pub _id: String,
     pub project: ProjectTaskProjectResponse,
     pub area: ProjectTaskAreaResponse,
+    pub user: Option<Vec<ProjectTaskUserResponse>>,
     pub task: Option<Vec<ProjectTaskTaskResponse>>,
     pub name: String,
     pub description: Option<String>,
@@ -146,7 +147,7 @@ pub struct ProjectTaskRequest {
     pub volume: Option<ProjectTaskVolume>,
     pub value: f64,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct ProjectTaskPeriodRequest {
     pub start: i64,
     pub end: i64,
@@ -229,7 +230,7 @@ impl ProjectTask {
         })
         .await
         .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())?
-        .ok_or_else(|| "PROJECT_TASK_NOT_FOUND")?;
+        .ok_or("PROJECT_TASK_NOT_FOUND")?;
         let mut task_id: Vec<ObjectId> = Vec::new();
 
         for task in tasks.iter() {
@@ -352,6 +353,16 @@ impl ProjectTask {
 
         collection
             .delete_one(doc! { "_id": _id }, None)
+            .await
+            .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())
+            .map(|result| result.deleted_count)
+    }
+    pub async fn delete_many_by_area_id(_id: &ObjectId) -> Result<u64, String> {
+        let db: Database = get_db();
+        let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
+
+        collection
+            .delete_many(doc! { "area_id": _id }, None)
             .await
             .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())
             .map(|result| result.deleted_count)
@@ -698,11 +709,6 @@ impl ProjectTask {
             }
         });
 
-        match collection.aggregate(pipeline.clone(), None).await {
-            Ok(_) => (),
-            Err(error) => println!("{:#?}", error),
-        };
-
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             let mut tasks: Vec<ProjectTaskMinResponse> = Vec::<ProjectTaskMinResponse>::new();
             while let Some(Ok(doc)) = cursor.next().await {
@@ -735,7 +741,7 @@ impl ProjectTask {
                 Ok(None)
             }
         } else {
-            Err("PROJECT_TASK_NOT_FOUND".to_string())
+            Ok(None)
         }
     }
     pub async fn find_many_area(
@@ -748,7 +754,7 @@ impl ProjectTask {
             doc! {
                 "$match": {
                     "$expr": {
-                        "$eq": [ "$_id", to_bson::<ObjectId>(&project_id).unwrap() ]
+                        "$eq": [ "$_id", to_bson::<ObjectId>(project_id).unwrap() ]
                     }
                 }
             },
@@ -974,7 +980,7 @@ impl ProjectTask {
                 if !areas.is_empty() {
                     Ok(Some(areas))
                 } else {
-                    Err("PROJECT_TASK_NOT_FOUND".to_string())
+                    Ok(None)
                 }
             }
             Err(_) => Err("PROJECT_TASK_NOT_FOUND".to_string()),
