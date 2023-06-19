@@ -33,14 +33,24 @@ fn load_env() {
     if std::env::var("BASE_URL").is_err() {
         std::env::set_var("BASE_URL", "http://localhost:8000");
     }
+    if std::env::var("PORT").is_err() {
+        std::env::set_var("PORT", "8000");
+    }
 }
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     load_env();
 
+    let port = std::env::var("PORT")
+        .unwrap()
+        .parse::<u16>()
+        .expect("INVALID_PORT");
+
     database::connect(std::env::var("DATABASE_URI").unwrap()).await;
     models::user::load_keys();
+
+    println!("Running on: http://localhost:{:#?}", port);
 
     HttpServer::new(move || {
         let cors = Cors::default()
@@ -83,7 +93,7 @@ async fn main() -> io::Result<()> {
             .service(routes::project::add_project_area)
             .service(routes::project::delete_project_area)
     })
-    .bind(("127.0.0.1", 8000))?
+    .bind(("127.0.0.1", port))?
     .workers(8)
     .run()
     .await
