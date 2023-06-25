@@ -7,9 +7,10 @@ edition = "2021"
 
 [dependencies]
 
-actix-web = "4.0.0"
-actix-service = "2.0.2"
+actix-cors = "0.6.4"
 actix-multipart = "0.6.0"
+actix-service = "2.0.2"
+actix-web = "4.0.0"
 async-recursion = "1.0.4"
 mongodb = "2.5.0"
 serde = "1.0.160"
@@ -18,4 +19,3 @@ pwhash = "1.0.0"
 jsonwebtoken = "8.3.0"
 chrono = "0.4.24"
 regex = "1.8.1"
-actix-cors = "0.6.4"

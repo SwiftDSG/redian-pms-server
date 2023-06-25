@@ -15,7 +15,8 @@ pub async fn get_customers() -> HttpResponse {
     };
 
     match Customer::find_many(&query).await {
-        Ok(customers) => HttpResponse::Ok().json(customers),
+        Ok(Some(customers)) => HttpResponse::Ok().json(customers),
+        Ok(None) => HttpResponse::NotFound().json("CUSTOMER_NOT_FOUND"),
         Err(error) => HttpResponse::BadRequest().body(error),
     }
 }
@@ -23,12 +24,12 @@ pub async fn get_customers() -> HttpResponse {
 pub async fn get_customer(customer_id: web::Path<String>) -> HttpResponse {
     let customer_id = match customer_id.parse() {
         Ok(customer_id) => customer_id,
-        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID"),
     };
 
     match Customer::find_by_id(&customer_id).await {
         Ok(Some(customer)) => HttpResponse::Ok().json(customer),
-        Ok(None) => HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string()),
+        Ok(None) => HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND"),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
@@ -39,12 +40,12 @@ pub async fn create_customer(
 ) -> HttpResponse {
     let issuer_role = match req.extensions().get::<UserAuthentication>() {
         Some(issuer) => issuer.role_id.clone(),
-        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED"),
     };
     if issuer_role.is_empty()
         || !Role::validate(&issuer_role, &RolePermission::CreateCustomer).await
     {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED");
     }
 
     let payload: CustomerRequest = payload.into_inner();
@@ -67,17 +68,17 @@ pub async fn update_customer(
 ) -> HttpResponse {
     let issuer_role = match req.extensions().get::<UserAuthentication>() {
         Some(issuer) => issuer.role_id.clone(),
-        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED"),
     };
     if issuer_role.is_empty()
         || !Role::validate(&issuer_role, &RolePermission::UpdateCustomer).await
     {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED");
     }
 
     let customer_id = match customer_id.parse() {
         Ok(customer_id) => customer_id,
-        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID"),
     };
 
     if let Ok(Some(_)) = Customer::find_by_id(&customer_id).await {
@@ -93,24 +94,24 @@ pub async fn update_customer(
             Err(error) => HttpResponse::InternalServerError().body(error),
         };
     } else {
-        HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND".to_string())
+        HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND")
     }
 }
 #[delete("/customers/{customer_id}")]
 pub async fn delete_customer(customer_id: web::Path<String>, req: HttpRequest) -> HttpResponse {
     let issuer_role = match req.extensions().get::<UserAuthentication>() {
         Some(issuer) => issuer.role_id.clone(),
-        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED"),
     };
     if issuer_role.is_empty()
         || !Role::validate(&issuer_role, &RolePermission::DeleteCustomer).await
     {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED");
     }
 
     let customer_id = match customer_id.parse() {
         Ok(customer_id) => customer_id,
-        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID"),
     };
 
     return match Customer::delete_customer(&customer_id).await {
@@ -118,4 +119,3 @@ pub async fn delete_customer(customer_id: web::Path<String>, req: HttpRequest) -
         Err(error) => HttpResponse::InternalServerError().body(error),
     };
 }
-//+validasi get 1 per 1, update, delete,

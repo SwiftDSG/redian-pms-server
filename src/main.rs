@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::{App, HttpServer};
+use actix_web::{web, App, HttpServer};
 use std::{fs::read_to_string, io};
 
 mod database;
@@ -33,6 +33,9 @@ fn load_env() {
     if std::env::var("BASE_URL").is_err() {
         std::env::set_var("BASE_URL", "http://localhost:8000");
     }
+    if std::env::var("BASE_PATH").is_err() {
+        std::env::set_var("BASE_PATH", "");
+    }
     if std::env::var("PORT").is_err() {
         std::env::set_var("PORT", "8000");
     }
@@ -60,38 +63,42 @@ async fn main() -> io::Result<()> {
             .supports_credentials();
         App::new()
             .wrap(models::user::UserAuthenticationMiddlewareFactory)
-            .wrap(cors)
-            .service(routes::user::get_users)
-            .service(routes::user::get_user)
-            .service(routes::user::create_user)
-            .service(routes::user::login)
-            .service(routes::user::refresh)
-            .service(routes::role::create_role)
-            .service(routes::customer::get_customers)
-            .service(routes::customer::get_customer)
-            .service(routes::customer::update_customer)
-            .service(routes::customer::create_customer)
-            .service(routes::customer::delete_customer)
-            .service(routes::project::get_projects)
-            .service(routes::project::get_project)
-            .service(routes::project::get_project_areas)
-            .service(routes::project::get_project_tasks)
-            .service(routes::project::get_project_task)
-            .service(routes::project::get_project_progress)
-            .service(routes::project::get_project_members)
-            .service(routes::project::create_project)
-            .service(routes::project::create_project_role)
-            .service(routes::project::create_project_task)
-            .service(routes::project::create_project_task_sub)
-            .service(routes::project::create_project_report)
-            .service(routes::project::create_project_incident)
-            .service(routes::project::update_project_task)
-            .service(routes::project::update_project_task_period)
-            .service(routes::project::update_project_task_status)
-            .service(routes::project::update_project_report)
-            .service(routes::project::add_project_member)
-            .service(routes::project::add_project_area)
-            .service(routes::project::delete_project_area)
+            .wrap(Cors::permissive())
+            .service(
+                web::scope(&std::env::var("BASE_PATH").unwrap())
+                    .service(routes::user::get_users)
+                    .service(routes::user::get_user)
+                    .service(routes::user::create_user)
+                    .service(routes::user::login)
+                    .service(routes::user::refresh)
+                    .service(routes::role::create_role)
+                    .service(routes::customer::get_customers)
+                    .service(routes::customer::get_customer)
+                    .service(routes::customer::update_customer)
+                    .service(routes::customer::create_customer)
+                    .service(routes::customer::delete_customer)
+                    .service(routes::project::get_projects)
+                    .service(routes::project::get_project)
+                    .service(routes::project::get_project_areas)
+                    .service(routes::project::get_project_tasks)
+                    .service(routes::project::get_project_task)
+                    .service(routes::project::get_project_progress)
+                    .service(routes::project::get_project_members)
+                    .service(routes::project::create_project)
+                    .service(routes::project::create_project_role)
+                    .service(routes::project::create_project_task)
+                    .service(routes::project::create_project_task_sub)
+                    .service(routes::project::create_project_report)
+                    .service(routes::project::create_project_incident)
+                    .service(routes::project::update_project_task)
+                    .service(routes::project::update_project_task_period)
+                    .service(routes::project::update_project_task_status)
+                    .service(routes::project::update_project_report)
+                    .service(routes::project::update_project_role)
+                    .service(routes::project::add_project_member)
+                    .service(routes::project::add_project_area)
+                    .service(routes::project::delete_project_area),
+            )
     })
     .bind(("127.0.0.1", port))?
     .workers(8)

@@ -70,7 +70,7 @@ pub struct UserRequest {
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserResponse {
-    pub _id: Option<ObjectId>,
+    pub _id: String,
     pub role_id: Vec<ObjectId>,
     pub name: String,
     pub email: String,
@@ -121,15 +121,18 @@ impl User {
 
         pipeline.push(doc! {
             "$project": {
+                "_id": {
+                    "$toString": "$_id"
+                },
                 "name": "$name",
                 "email": "$email",
-                "role": "$role",
+                "role_id": "$role_id",
             }
         });
 
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             while let Some(Ok(doc)) = cursor.next().await {
-                let user: UserResponse = from_document::<UserResponse>(doc).unwrap();
+                let user = from_document::<UserResponse>(doc).unwrap();
                 users.push(user);
             }
             if !users.is_empty() {
@@ -162,7 +165,7 @@ impl User {
 }
 
 impl UserCredential {
-    pub async fn authenticate(&self) -> Result<(String, String), String> {
+    pub async fn authenticate(&self) -> Result<(String, String, User), String> {
         let user = User::find_by_email(&self.email)
             .await?
             .ok_or_else(|| "INVALID_COMBINATION".to_string())?;
@@ -172,7 +175,7 @@ impl UserCredential {
 
         let claim_access: UserClaim = UserClaim {
             sub: ObjectId::to_string(&user._id.unwrap()),
-            exp: Utc::now().timestamp() + 1800,
+            exp: Utc::now().timestamp() + 10,
             iss: "Redian".to_string(),
             aud: std::env::var("BASE_URL").unwrap(),
         };
@@ -199,12 +202,12 @@ impl UserCredential {
                         .unwrap(),
                 ),
             ) {
-                (Ok(atk), Ok(rtk)) => Ok((atk, rtk)),
+                (Ok(atk), Ok(rtk)) => Ok((atk, rtk, user)),
                 _ => Err("GENERATING_FAILED".to_string()),
             }
         }
     }
-    pub async fn refresh(token: &str) -> Result<(String, String), String> {
+    pub async fn refresh(token: &str) -> Result<(String, String, User), String> {
         let validation: Validation = Validation::new(Algorithm::RS256);
         let data: TokenData<UserClaim>;
 
@@ -224,7 +227,7 @@ impl UserCredential {
 
         let claim_access: UserClaim = UserClaim {
             sub: ObjectId::to_string(&user._id.unwrap()),
-            exp: Utc::now().timestamp() + 1800,
+            exp: Utc::now().timestamp() + 10,
             iss: "Redian".to_string(),
             aud: std::env::var("BASE_URL").unwrap(),
         };
@@ -251,7 +254,7 @@ impl UserCredential {
                         .unwrap(),
                 ),
             ) {
-                (Ok(atk), Ok(rtk)) => Ok((atk, rtk)),
+                (Ok(atk), Ok(rtk)) => Ok((atk, rtk, user)),
                 _ => Err("GENERATING_FAILED".to_string()),
             }
         }
@@ -294,17 +297,19 @@ where
                 for i in bearer_token.as_bytes() {
                     bytes_token.push(*i);
                 }
-                bytes_token.drain(0..7);
-                let token: String = String::from_utf8(bytes_token).unwrap();
-                if let Some(_id) = UserCredential::verify(&token) {
-                    if let Ok(Some(user)) = User::find_by_id(&_id).await {
-                        let auth_data: UserAuthenticationData = UserAuthenticationData {
-                            _id: Some(_id),
-                            role_id: user.role_id,
-                            token,
-                        };
-                        req.extensions_mut()
-                            .insert::<UserAuthentication>(Rc::new(auth_data));
+                if bytes_token.len() > 7 {
+                    bytes_token.drain(0..7);
+                    let token: String = String::from_utf8(bytes_token).unwrap();
+                    if let Some(_id) = UserCredential::verify(&token) {
+                        if let Ok(Some(user)) = User::find_by_id(&_id).await {
+                            let auth_data: UserAuthenticationData = UserAuthenticationData {
+                                _id: Some(_id),
+                                role_id: user.role_id,
+                                token,
+                            };
+                            req.extensions_mut()
+                                .insert::<UserAuthentication>(Rc::new(auth_data));
+                        }
                     }
                 }
             }

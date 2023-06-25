@@ -71,7 +71,7 @@ pub struct ProjectTaskResponse {
     pub project: ProjectTaskProjectResponse,
     pub area: ProjectTaskAreaResponse,
     pub user: Option<Vec<ProjectTaskUserResponse>>,
-    pub task: Option<Vec<ProjectTaskTaskResponse>>,
+    pub task: Option<Vec<ProjectTaskMinResponse>>,
     pub name: String,
     pub description: Option<String>,
     pub period: Option<ProjectTaskPeriodResponse>,
@@ -135,7 +135,10 @@ pub struct ProjectTaskQuery {
 pub struct ProjectTaskTimelineQuery {
     pub project_id: ObjectId,
     pub area_id: Option<ObjectId>,
+    pub task_id: Option<ObjectId>,
     pub status: Option<ProjectTaskStatusKind>,
+    pub relative: bool,
+    pub subtask: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -367,6 +370,16 @@ impl ProjectTask {
             .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())
             .map(|result| result.deleted_count)
     }
+    pub async fn delete_many_by_task_id(_id: &ObjectId) -> Result<u64, String> {
+        let db: Database = get_db();
+        let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
+
+        collection
+            .delete_many(doc! { "task_id": _id }, None)
+            .await
+            .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())
+            .map(|result| result.deleted_count)
+    }
     pub async fn find_many(query: &ProjectTaskQuery) -> Result<Option<Vec<ProjectTask>>, String> {
         let db: Database = get_db();
         let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
@@ -474,20 +487,22 @@ impl ProjectTask {
         let mut dependencies: Vec<ProjectTask> = Vec::new();
         let mut task_id: Vec<ObjectId> = Vec::new();
 
-        if let Ok(Some(tasks)) = Self::find_many(&ProjectTaskQuery {
-            _id: None,
-            project_id: Some(query.project_id),
-            task_id: None,
-            area_id: None,
-            limit: None,
-            kind: Some(ProjectTaskQueryKind::Dependency),
-        })
-        .await
-        {
-            dependencies = tasks;
-            for task in dependencies.iter() {
-                if !task_id.contains(&task._id.unwrap()) {
-                    task_id.push(task._id.unwrap());
+        if !query.relative {
+            if let Ok(Some(tasks)) = Self::find_many(&ProjectTaskQuery {
+                _id: None,
+                project_id: Some(query.project_id),
+                task_id: None,
+                area_id: None,
+                limit: None,
+                kind: Some(ProjectTaskQueryKind::Dependency),
+            })
+            .await
+            {
+                dependencies = tasks;
+                for task in dependencies.iter() {
+                    if !task_id.contains(&task._id.unwrap()) {
+                        task_id.push(task._id.unwrap());
+                    }
                 }
             }
         }
@@ -509,6 +524,11 @@ impl ProjectTask {
         if let Some(_id) = query.area_id {
             queries.push(doc! {
                 "$eq": [ "$area_id", to_bson::<ObjectId>(&_id).unwrap() ]
+            });
+        }
+        if let Some(_id) = query.task_id {
+            queries.push(doc! {
+                "$eq": [ "$task_id", to_bson::<ObjectId>(&_id).unwrap() ]
             });
         }
         if let Some(status) = query.status.clone() {
@@ -608,6 +628,52 @@ impl ProjectTask {
                 ]
             }
         });
+
+        if query.subtask {
+            pipeline.push(doc! {
+                "$lookup": {
+                    "from": "project-tasks",
+                    "let": {
+                        "task_id": "$_id"
+                    },
+                    "as": "task",
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {
+                                    "$eq": ["$task_id", "$$task_id"]
+                                }
+                            }
+                        },
+                        {
+                            "$project": {
+                                "_id": {
+                                    "$toString": "$_id"
+                                },
+                                "name": "$name",
+                                "period": {
+                                    "$cond": [
+                                        "$period",
+                                        {
+                                            "start": {
+                                                "$toString": "$period.start"
+                                            },
+                                            "end": {
+                                                "$toString": "$period.end"
+                                            },
+                                        },
+                                        to_bson::<Option<ObjectId>>(&None).unwrap()
+                                    ]
+                                },
+                                "status": "$status",
+                                "volume": "$volume",
+                            }
+                        }
+                    ]
+                }
+            })
+        }
+
         pipeline.push(doc! {
             "$project": {
                 "_id": {
@@ -763,6 +829,7 @@ impl ProjectTask {
                     "from": "project-tasks",
                     "let": {
                         "project_id": "$_id",
+                        "member": "$member"
                     },
                     "as": "tasks",
                     "pipeline": [
@@ -783,19 +850,45 @@ impl ProjectTask {
                         {
                             "$lookup": {
                                 "from": "users",
+                                "as": "users",
                                 "let": {
                                     "user_id": {
-                                        "$cond": ["$user_id", "$user_id", []]
+                                        "$map": {
+                                            "input": {
+                                                "$filter": {
+                                                    "input": "$$member",
+                                                    "cond": {
+                                                        "$and": [
+                                                            {
+                                                                "$ne": ["$$this.kind", "support"]
+                                                            },
+                                                            {
+                                                                "$in": [
+                                                                    "$$this._id",
+                                                                    {
+                                                                        "$cond": [
+                                                                            "$user_id",
+                                                                            "$user_id",
+                                                                            []
+                                                                        ]
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            },
+                                            "in": "$$this._id"
+                                        }
                                     }
                                 },
-                                "as": "user",
                                 "pipeline": [
                                     {
                                         "$match": {
                                             "$expr": {
                                                 "$in": ["$_id", "$$user_id"]
                                             }
-                                        }
+                                        },
                                     },
                                     {
                                         "$project": {
@@ -894,7 +987,45 @@ impl ProjectTask {
                                 },
                                 "area_id": "$area_id",
                                 "task_id": "$task_id",
-                                "user": "$user",
+                                "user": {
+                                    "$concatArrays": [
+                                        "$users",
+                                        {
+                                            "$map": {
+                                                "input": {
+                                                    "$filter": {
+                                                        "input": "$$member",
+                                                        "cond": {
+                                                            "$and": [
+                                                                {
+                                                                    "$eq": ["$$this.kind", "support"]
+                                                                },
+                                                                {
+                                                                    "$in": [
+                                                                        "$$this._id",
+                                                                        {
+                                                                            "$cond": [
+                                                                                "$user_id",
+                                                                                "$user_id",
+                                                                                []
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    }
+                                                },
+                                                "in": {
+                                                    "_id": {
+                                                        "$toString": "$$this._id"
+                                                    },
+                                                    "name": "$$this.name"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                },
                                 "task": "$task",
                                 "name": "$name",
                                 "period": {
@@ -983,7 +1114,10 @@ impl ProjectTask {
                     Ok(None)
                 }
             }
-            Err(_) => Err("PROJECT_TASK_NOT_FOUND".to_string()),
+            Err(err) => {
+                println!("{:#?}", err);
+                Err("PROJECT_TASK_NOT_FOUND".to_string())
+            }
         }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<ProjectTask>, String> {
@@ -1113,6 +1247,7 @@ impl ProjectTask {
                                     "$toString": "$_id"
                                 },
                                 "name": "$name",
+                                "member": "$member",
                                 "area": {
                                     "$first": {
                                         "$filter": {
@@ -1123,6 +1258,63 @@ impl ProjectTask {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    ]
+                }
+            },
+            doc! {
+                "$lookup": {
+                    "from": "users",
+                    "as": "users",
+                    "let": {
+                        "user_id": {
+                            "$map": {
+                                "input": {
+                                    "$filter": {
+                                        "input": {
+                                            "$first": "$project.member"
+                                        },
+                                        "cond": {
+                                            "$and": [
+                                                {
+                                                    "$ne": ["$$this.kind", "support"]
+                                                },
+                                                {
+                                                    "$in": [
+                                                        "$$this._id",
+                                                        {
+                                                            "$cond": [
+                                                                "$user_id",
+                                                                "$user_id",
+                                                                []
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                "in": "$$this._id"
+                            }
+                        }
+                    },
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {
+                                    "$in": ["$_id", "$$user_id"]
+                                }
+                            },
+                        },
+                        {
+                            "$project": {
+                                "_id": {
+                                    "$toString": "$_id"
+                                },
+                                "name": "$name",
+                                "image": "$image",
                             }
                         }
                     ]
@@ -1146,20 +1338,48 @@ impl ProjectTask {
                             "$first": "$project.area.name"
                         },
                     },
-                    "task": {
-                        "$cond": [
+                    "user": {
+                        "$concatArrays": [
+                            "$users",
                             {
-                                "$gt": [
-                                    {
-                                        "$size": "$sub_task"
+                                "$map": {
+                                    "input": {
+                                        "$filter": {
+                                            "input": {
+                                                "$first": "$project.member"
+                                            },
+                                            "cond": {
+                                                "$and": [
+                                                    {
+                                                        "$eq": ["$$this.kind", "support"]
+                                                    },
+                                                    {
+                                                        "$in": [
+                                                            "$$this._id",
+                                                            {
+                                                                "$cond": [
+                                                                    "$user_id",
+                                                                    "$user_id",
+                                                                    []
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        }
                                     },
-                                    0
-                                ]
-                            },
-                            "$sub_task",
-                            to_bson::<Option<ObjectId>>(&None).unwrap()
+                                    "in": {
+                                        "_id": {
+                                            "$toString": "$$this._id"
+                                        },
+                                        "name": "$$this.name"
+                                    }
+                                }
+                            }
                         ]
                     },
+                    "task": to_bson::<Option<ObjectId>>(&None).unwrap(),
                     "name": "$name",
                     "description": "$description",
                     "period": {
@@ -1195,7 +1415,17 @@ impl ProjectTask {
 
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             if let Some(Ok(doc)) = cursor.next().await {
-                let task = from_document::<ProjectTaskResponse>(doc).unwrap();
+                let mut task = from_document::<ProjectTaskResponse>(doc).unwrap();
+                task.task = Self::find_many_timeline(&ProjectTaskTimelineQuery {
+                    project_id: task.project._id.parse::<ObjectId>().unwrap(),
+                    area_id: None,
+                    task_id: Some(*_id),
+                    status: None,
+                    relative: true,
+                    subtask: true,
+                })
+                .await
+                .map_or_else(|_| Some(Vec::<ProjectTaskMinResponse>::new()), |task| task);
                 Ok(Some(task))
             } else {
                 Ok(None)

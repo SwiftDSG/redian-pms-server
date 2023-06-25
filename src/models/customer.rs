@@ -75,7 +75,7 @@ impl Customer {
             .map_err(|_| "INSERTING_FAILED".to_string())
             .map(|result| result.inserted_id.as_object_id().unwrap())
     }
-    pub async fn find_many(query: &CustomerQuery) -> Result<Vec<CustomerResponse>, String> {
+    pub async fn find_many(query: &CustomerQuery) -> Result<Option<Vec<CustomerResponse>>, String> {
         let db: Database = get_db();
         let collection: Collection<Customer> = db.collection::<Customer>("customers");
 
@@ -119,12 +119,12 @@ impl Customer {
                 customers.push(customer);
             }
             if !customers.is_empty() {
-                Ok(customers)
+                Ok(Some(customers))
             } else {
-                Err("error".to_string())
+                Ok(None)
             }
         } else {
-            Err("error".to_string())
+            Err("CUSTOMER_NOT_FOUND".to_string())
         }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<Customer>, String> {

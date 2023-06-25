@@ -1,7 +1,7 @@
 use crate::database::get_db;
 
 use mongodb::{
-    bson::{doc, oid::ObjectId},
+    bson::{doc, oid::ObjectId, to_bson},
     Collection, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -14,10 +14,12 @@ pub enum ProjectRolePermission {
     Owner,
     CreateRole,
     UpdateRole,
+    DeleteRole,
     GetRoles,
     GetRole,
     CreateTask,
     UpdateTask,
+    DeleteTask,
     GetTasks,
     GetTask,
     CreateReport,
@@ -105,5 +107,23 @@ impl ProjectRole {
             .await
             .map_err(|_| "PROJECT_ROLE_NOT_FOUND".to_string())
             .map(|result| result.deleted_count)
+    }
+    pub async fn update(&self) -> Result<ObjectId, String> {
+        let db: Database = get_db();
+        let collection: Collection<ProjectRole> = db.collection::<ProjectRole>("project-roles");
+
+        collection
+            .update_one(
+                doc! {
+                    "_id": self._id.unwrap()
+                },
+                doc! {
+                    "$set": to_bson::<Self>(self).unwrap()
+                },
+                None,
+            )
+            .await
+            .map_err(|_| "UPDATE_FAILED".to_string())
+            .map(|_| self._id.unwrap())
     }
 }

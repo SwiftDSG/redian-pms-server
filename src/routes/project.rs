@@ -26,7 +26,7 @@ use serde::Deserialize;
 
 use crate::models::{
     project::{
-        Project, ProjectAreaRequest, ProjectMember, ProjectMemberKind, ProjectPeriod,
+        Project, ProjectAreaRequest, ProjectMemberKind, ProjectMemberRequest, ProjectPeriod,
         ProjectProgressGraphResponse, ProjectQuery, ProjectRequest, ProjectStatus,
         ProjectStatusKind,
     },
@@ -101,9 +101,12 @@ pub async fn get_project_tasks(
     };
 
     match ProjectTask::find_many_timeline(&ProjectTaskTimelineQuery {
-        area_id: None,
-        status: query.status.clone(),
         project_id,
+        area_id: None,
+        task_id: None,
+        status: query.status.clone(),
+        relative: false,
+        subtask: false,
     })
     .await
     {
@@ -355,8 +358,8 @@ pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest
 
             match project_role.save().await {
                 Ok(role_id) => {
-                    let member: ProjectMember = ProjectMember {
-                        _id: issuer._id.unwrap(),
+                    let member = ProjectMemberRequest {
+                        _id: Some(issuer._id.unwrap()),
                         role_id: vec![role_id],
                         kind: ProjectMemberKind::Indirect,
                         name: None,
@@ -488,6 +491,10 @@ pub async fn create_project_task_sub(
     if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
+
+    match ProjectTask::delete_many_by_task_id(&task_id).await {
+        _ => (),
+    };
 
     if let Ok(Some(task)) = ProjectTask::find_by_id(&task_id).await {
         if let Ok(Some(project)) = Project::find_by_id(&task.project_id).await {
@@ -666,6 +673,7 @@ pub async fn update_project_task(
             task.volume = payload.volume;
             task.description = payload.description;
             task.value = payload.value;
+            task.user_id = payload.user_id;
 
             match task.update().await {
                 Ok(task_id) => HttpResponse::Ok().body(task_id.to_string()),
@@ -845,10 +853,48 @@ pub async fn update_project_report(
 
     HttpResponse::Ok().body(report_id.to_string())
 }
+#[put("/projects/{project_id}/roles/{role_id}")] // REDO ALL CHANGES WHEN FAILED
+pub async fn update_project_role(
+    _id: web::Path<(String, String)>,
+    payload: web::Json<ProjectRoleRequest>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let (project_id, role_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(role_id)) => (project_id, role_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    println!("{:#?}", project_id);
+    println!("{:#?}", role_id);
+
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::UpdateRole).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    let mut project_role = match ProjectRole::find_by_id(&role_id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return HttpResponse::NotFound().body("PROJECT_ROLE_NOT_FOUND"),
+        Err(_) => return HttpResponse::NotFound().body("PROJECT_ROLE_NOT_FOUND"),
+    };
+
+    let payload: ProjectRoleRequest = payload.into_inner();
+
+    project_role.name = payload.name;
+    project_role.permission = payload.permission;
+
+    match project_role.update().await {
+        Ok(role_id) => HttpResponse::Ok().body(role_id.to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
 #[put("/projects/{project_id}/members")]
 pub async fn add_project_member(
     project_id: web::Path<String>,
-    payload: web::Json<ProjectMember>,
+    payload: web::Json<ProjectMemberRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
     let project_id = match project_id.parse() {
@@ -865,7 +911,7 @@ pub async fn add_project_member(
     }
 
     if let Ok(Some(mut project)) = Project::find_by_id(&project_id).await {
-        let payload: ProjectMember = payload.into_inner();
+        let payload: ProjectMemberRequest = payload.into_inner();
 
         match project.add_member(&[payload]).await {
             Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
@@ -915,8 +961,6 @@ pub async fn delete_project_area(
         (Ok(project_id), Ok(area_id)) => (project_id, area_id),
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
     };
-
-    println!("{:#?}", project_id);
 
     let issuer_id = match req.extensions().get::<UserAuthentication>() {
         Some(issuer) => issuer._id.unwrap(),

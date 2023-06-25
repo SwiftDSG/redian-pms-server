@@ -116,9 +116,10 @@ pub async fn login(payload: web::Json<UserCredential>) -> HttpResponse {
     let payload: UserCredential = payload.into_inner();
 
     match payload.authenticate().await {
-        Ok((atk, rtk)) => HttpResponse::Ok().json(doc! {
+        Ok((atk, rtk, user)) => HttpResponse::Ok().json(doc! {
             "atk": to_bson::<String>(&atk).unwrap(),
-            "rtk": to_bson::<String>(&rtk).unwrap()
+            "rtk": to_bson::<String>(&rtk).unwrap(),
+            "user": to_bson::<User>(&user).unwrap()
         }),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
@@ -127,10 +128,13 @@ pub async fn login(payload: web::Json<UserCredential>) -> HttpResponse {
 pub async fn refresh(payload: web::Json<UserRefresh>) -> HttpResponse {
     let payload: UserRefresh = payload.into_inner();
 
+    println!("{:#?}", payload);
+
     match UserCredential::refresh(&payload.rtk).await {
-        Ok((atk, rtk)) => HttpResponse::Ok().json(doc! {
+        Ok((atk, rtk, user)) => HttpResponse::Ok().json(doc! {
             "atk": to_bson::<String>(&atk).unwrap(),
-            "rtk": to_bson::<String>(&rtk).unwrap()
+            "rtk": to_bson::<String>(&rtk).unwrap(),
+            "user": to_bson::<User>(&user).unwrap()
         }),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }

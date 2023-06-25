@@ -87,6 +87,13 @@ pub struct ProjectRequest {
     pub leave: Option<Vec<DateTime>>,
 }
 #[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectMemberRequest {
+    pub _id: Option<ObjectId>,
+    pub name: Option<String>,
+    pub kind: ProjectMemberKind,
+    pub role_id: Vec<ObjectId>,
+}
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectPeriodRequest {
     pub start: i64,
     pub end: i64,
@@ -168,7 +175,10 @@ impl Project {
             Err("CUSTOMER_NOT_FOUND".to_string())
         }
     }
-    pub async fn add_member(&mut self, members: &[ProjectMember]) -> Result<ObjectId, String> {
+    pub async fn add_member(
+        &mut self,
+        members: &[ProjectMemberRequest],
+    ) -> Result<ObjectId, String> {
         let db: Database = get_db();
         let collection: Collection<Project> = db.collection::<Project>("projects");
 
@@ -181,12 +191,24 @@ impl Project {
             match i.kind {
                 ProjectMemberKind::Support => {
                     if i.name.is_some() {
-                        member.push(i.clone());
+                        member.push(ProjectMember {
+                            _id: ObjectId::new(),
+                            name: i.name.clone(),
+                            kind: i.kind.clone(),
+                            role_id: i.role_id.clone(),
+                        });
                     }
                 }
                 _ => {
-                    if (User::find_by_id(&i._id).await).is_ok() {
-                        member.push(i.clone());
+                    if let Some(_id) = &i._id {
+                        if (User::find_by_id(_id).await).is_ok() {
+                            member.push(ProjectMember {
+                                _id: _id.clone(),
+                                name: None,
+                                kind: i.kind.clone(),
+                                role_id: i.role_id.clone(),
+                            });
+                        }
                     }
                 }
             }
@@ -664,11 +686,19 @@ impl Project {
                                         }
                                     },
                                     "in": {
-                                        "_id": "$$this._id",
+                                        "_id": {
+                                            "$toString": "$$this._id"
+                                        },
                                         "name": "$$this.name",
                                         "kind": "$$this.kind",
                                         "role_id": {
-                                            "$toString": "$$this.role_id"
+                                            "$map": {
+                                                "input": "$$this.role_id",
+                                                "as": "role",
+                                                "in": {
+                                                    "$toString": "$$role"
+                                                }
+                                            }
                                         },
                                         "image": to_bson::<Option<UserImage>>(&None).unwrap()
                                     }
@@ -804,7 +834,7 @@ impl Project {
         collection
             .update_one(
                 doc! { "_id": self._id.unwrap() },
-                doc! { "$set": to_bson::<Project>(self).unwrap()},
+                doc! { "$set": to_bson::<Self>(self).unwrap()},
                 None,
             )
             .await
