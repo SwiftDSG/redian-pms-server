@@ -1114,10 +1114,7 @@ impl ProjectTask {
                     Ok(None)
                 }
             }
-            Err(err) => {
-                println!("{:#?}", err);
-                Err("PROJECT_TASK_NOT_FOUND".to_string())
-            }
+            Err(_) => Err("PROJECT_TASK_NOT_FOUND".to_string()),
         }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<ProjectTask>, String> {

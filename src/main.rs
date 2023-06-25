@@ -63,7 +63,7 @@ async fn main() -> io::Result<()> {
             .supports_credentials();
         App::new()
             .wrap(models::user::UserAuthenticationMiddlewareFactory)
-            .wrap(Cors::permissive())
+            .wrap(cors)
             .service(
                 web::scope(&std::env::var("BASE_PATH").unwrap())
                     .service(routes::user::get_users)
@@ -105,3 +105,5 @@ async fn main() -> io::Result<()> {
     .run()
     .await
 }
+
+// ./target/release/pms-start start &

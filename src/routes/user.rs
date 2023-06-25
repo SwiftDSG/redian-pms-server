@@ -27,11 +27,11 @@ pub async fn get_user(_id: web::Path<String>) -> HttpResponse {
     if let Ok(_id) = ObjectId::from_str(&_id) {
         return match User::find_by_id(&_id).await {
             Ok(Some(user)) => HttpResponse::Ok().json(user),
-            Ok(None) => HttpResponse::NotFound().body("USER_NOT_FOUND".to_string()),
+            Ok(None) => HttpResponse::NotFound().body("USER_NOT_FOUND"),
             Err(error) => HttpResponse::InternalServerError().body(error),
         };
     } else {
-        HttpResponse::BadRequest().body("INVALID_ID".to_string())
+        HttpResponse::BadRequest().body("INVALID_ID")
     }
 }
 #[post("/users")]
@@ -43,10 +43,10 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
     .unwrap();
 
     if payload.password.len() < 8 {
-        return HttpResponse::BadRequest().body("USER_MUST_HAVE_VALID_PASSWORD".to_string());
+        return HttpResponse::BadRequest().body("USER_MUST_HAVE_VALID_PASSWORD");
     }
     if !email_regex.is_match(&payload.email) {
-        return HttpResponse::BadRequest().body("USER_MUST_HAVE_VALID_EMAIL".to_string());
+        return HttpResponse::BadRequest().body("USER_MUST_HAVE_VALID_EMAIL");
     }
 
     let mut user: User = User {
@@ -86,8 +86,15 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
             return HttpResponse::BadRequest().body("USER_MUST_HAVE_ROLES".to_string());
         }
     } else {
-        if (Role::delete_many().await).is_err() {
-            return HttpResponse::BadRequest().body("UNABLE_TO_DELETE_ROLES".to_string());
+        match Role::delete_many().await {
+            Ok(_) => (),
+            Err(error) => {
+                println!("{:#?}", error);
+                return HttpResponse::InternalServerError().body(error);
+            }
+        }
+        if Role::delete_many().await.is_err() {
+            return HttpResponse::InternalServerError().body("UNABLE_TO_DELETE_ROLES");
         }
         let mut role: Role = Role {
             _id: None,
@@ -98,12 +105,12 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
         if let Ok(_id) = role.save().await {
             user.role_id = vec![_id];
         } else {
-            return HttpResponse::BadRequest().body("UNABLE_TO_CREATE_ROLE".to_string());
+            return HttpResponse::BadRequest().body("UNABLE_TO_CREATE_ROLE");
         }
     }
 
     if let Ok(Some(_)) = User::find_by_email(&user.email).await {
-        HttpResponse::BadRequest().body("USER_ALREADY_EXIST".to_string())
+        HttpResponse::BadRequest().body("USER_ALREADY_EXIST")
     } else {
         match user.save().await {
             Ok(id) => HttpResponse::Created().body(id.to_string()),
@@ -127,8 +134,6 @@ pub async fn login(payload: web::Json<UserCredential>) -> HttpResponse {
 #[post("/users/refresh")]
 pub async fn refresh(payload: web::Json<UserRefresh>) -> HttpResponse {
     let payload: UserRefresh = payload.into_inner();
-
-    println!("{:#?}", payload);
 
     match UserCredential::refresh(&payload.rtk).await {
         Ok((atk, rtk, user)) => HttpResponse::Ok().json(doc! {
