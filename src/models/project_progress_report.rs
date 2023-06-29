@@ -9,7 +9,7 @@ use mongodb::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    project::{Project, ProjectStatusKind},
+    project::{Project, ProjectMemberResponse, ProjectStatusKind},
     project_task::{ProjectTask, ProjectTaskStatusKind},
 };
 
@@ -26,6 +26,8 @@ pub enum ProjectProgressReportWeatherKind {
 pub struct ProjectProgressReport {
     pub _id: Option<ObjectId>,
     pub project_id: ObjectId,
+    pub user_id: ObjectId,
+    pub member_id: Option<Vec<ObjectId>>,
     pub date: DateTime,
     pub time: Option<[[usize; 2]; 2]>,
     pub actual: Option<Vec<ProjectProgressReportActual>>,
@@ -61,6 +63,7 @@ pub struct ProjectProgressReportQuery {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectProgressReportRequest {
+    pub member_id: Option<Vec<ObjectId>>,
     pub time: Option<[[usize; 2]; 2]>,
     pub actual: Option<Vec<ProjectProgressReportActual>>,
     pub plan: Option<Vec<ProjectProgressReportPlan>>,
@@ -71,6 +74,30 @@ pub struct ProjectProgressReportRequest {
 pub struct ProjectProgressReportDocumentationRequest {
     #[multipart(rename = "file")]
     pub files: Vec<TempFile>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectProgressReportResponse {
+    pub _id: String,
+    pub user: ProjectProgressReportUserResponse,
+    pub project: ProjectProgressReportProjectResponse,
+    pub date: String,
+    pub time: Option<[[usize; 2]; 2]>,
+    pub member: Option<Vec<ProjectMemberResponse>>,
+    pub actual: Option<Vec<ProjectProgressReportActual>>,
+    pub plan: Option<Vec<ProjectProgressReportPlan>>,
+    pub weather: Option<Vec<ProjectProgressReportWeather>>,
+    pub documentation: Option<Vec<ProjectProgressReportDocumentation>>,
+    pub progress: f64,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectProgressReportUserResponse {
+    pub _id: String,
+    pub name: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectProgressReportProjectResponse {
+    pub _id: String,
+    pub name: String,
 }
 
 impl ProjectProgressReport {

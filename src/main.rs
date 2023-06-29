@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 use actix_cors::Cors;
 use actix_web::{web, App, HttpServer};
 use std::{fs::read_to_string, io};
@@ -71,7 +72,11 @@ async fn main() -> io::Result<()> {
                     .service(routes::user::create_user)
                     .service(routes::user::login)
                     .service(routes::user::refresh)
+                    .service(routes::role::get_roles)
+                    .service(routes::role::get_role)
                     .service(routes::role::create_role)
+                    .service(routes::role::update_role)
+                    .service(routes::role::delete_role)
                     .service(routes::customer::get_customers)
                     .service(routes::customer::get_customer)
                     .service(routes::customer::update_customer)
@@ -84,6 +89,7 @@ async fn main() -> io::Result<()> {
                     .service(routes::project::get_project_task)
                     .service(routes::project::get_project_progress)
                     .service(routes::project::get_project_members)
+                    .service(routes::project::get_project_reports)
                     .service(routes::project::create_project)
                     .service(routes::project::create_project_role)
                     .service(routes::project::create_project_task)
@@ -97,7 +103,8 @@ async fn main() -> io::Result<()> {
                     .service(routes::project::update_project_role)
                     .service(routes::project::add_project_member)
                     .service(routes::project::add_project_area)
-                    .service(routes::project::delete_project_area),
+                    .service(routes::project::delete_project_area)
+                    .service(routes::project::delete_project_task),
             )
     })
     .bind(("127.0.0.1", port))?

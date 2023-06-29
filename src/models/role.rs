@@ -6,6 +6,8 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::user::User;
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RolePermission {
@@ -49,7 +51,7 @@ pub struct RoleRequest {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RoleResponse {
-    pub _id: Option<ObjectId>,
+    pub _id: String,
     pub name: String,
     pub permission: Vec<RolePermission>,
 }
@@ -83,6 +85,20 @@ impl Role {
             .map_err(|_| "INSERTING_FAILED".to_string())
             .map(|result| result.inserted_id.as_object_id().unwrap())
     }
+    pub async fn update(&mut self) -> Result<ObjectId, String> {
+        let db: Database = get_db();
+        let collection: Collection<Role> = db.collection::<Role>("roles");
+
+        collection
+            .update_one(
+                doc! { "_id": self._id.unwrap() },
+                doc! { "$set": to_bson::<Self>(self).unwrap() },
+                None,
+            )
+            .await
+            .map_err(|_| "UPDATE_FAILED".to_string())
+            .map(|_| self._id.unwrap())
+    }
     pub async fn find_many(query: &RoleQuery) -> Result<Vec<RoleResponse>, String> {
         let db: Database = get_db();
         let collection: Collection<Role> = db.collection::<Role>("roles");
@@ -93,8 +109,16 @@ impl Role {
         if let Some(limit) = query.limit {
             pipeline.push(doc! {
                 "$limit": to_bson::<usize>(&limit).unwrap()
-            })
+            });
         }
+
+        pipeline.push(doc! {
+            "$project": {
+                "_id": { "$toString": "$_id" },
+                "name": "$name",
+                "permission": "$permission",
+            }
+        });
 
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             while let Some(Ok(doc)) = cursor.next().await {
@@ -132,6 +156,35 @@ impl Role {
     pub async fn delete_by_id(_id: &ObjectId) -> Result<u64, String> {
         let db: Database = get_db();
         let collection: Collection<Role> = db.collection::<Role>("roles");
+
+        match db
+            .collection::<User>("users")
+            .find(
+                doc! {
+                    "role_id": to_bson::<ObjectId>(_id).unwrap()
+                },
+                None,
+            )
+            .await
+        {
+            Ok(mut cursor) => {
+                while let Some(Ok(mut user)) = cursor.next().await {
+                    if let Some(index) = user.role_id.iter().position(|a| a == _id) {
+                        user.role_id.remove(index);
+                        if user.role_id.is_empty() {
+                            user.delete()
+                                .await
+                                .map_err(|_| "USER_DELETION_FAILED".to_string())?;
+                        } else {
+                            user.update()
+                                .await
+                                .map_err(|_| "ROLE_DELETION_FAILED".to_string())?;
+                        }
+                    }
+                }
+            }
+            Err(_) => (),
+        };
 
         collection
             .delete_one(doc! { "_id": _id }, None)

@@ -12,6 +12,7 @@ use crate::models::{
 pub async fn get_users() -> HttpResponse {
     let query: UserQuery = UserQuery {
         _id: None,
+        role_id: None,
         email: None,
         limit: None,
     };
@@ -60,6 +61,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
 
     if (User::find_many(&UserQuery {
         _id: None,
+        role_id: None,
         email: None,
         limit: Some(1),
     })

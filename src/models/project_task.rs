@@ -350,15 +350,34 @@ impl ProjectTask {
             Ok(self._id.unwrap())
         }
     }
+    #[async_recursion]
     pub async fn delete_by_id(_id: &ObjectId) -> Result<u64, String> {
         let db: Database = get_db();
         let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
 
-        collection
-            .delete_one(doc! { "_id": _id }, None)
-            .await
-            .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())
-            .map(|result| result.deleted_count)
+        let tasks = Self::find_many(&ProjectTaskQuery {
+            _id: None,
+            project_id: None,
+            task_id: Some(_id.clone()),
+            area_id: None,
+            limit: None,
+            kind: None,
+        })
+        .await?
+        .map_or_else(|| Vec::<ProjectTask>::new(), |val| val);
+
+        let mut deleted = match collection.delete_one(doc! { "_id": _id }, None).await {
+            Ok(result) => result.deleted_count,
+            Err(_) => return Err("PROJECT_TASK_NOT_FOUND".to_string()),
+        };
+
+        for task in tasks.iter() {
+            deleted += Self::delete_by_id(&task._id.unwrap())
+                .await
+                .map_or_else(|_| 0, |val| val);
+        }
+
+        Ok(deleted)
     }
     pub async fn delete_many_by_area_id(_id: &ObjectId) -> Result<u64, String> {
         let db: Database = get_db();
@@ -371,14 +390,26 @@ impl ProjectTask {
             .map(|result| result.deleted_count)
     }
     pub async fn delete_many_by_task_id(_id: &ObjectId) -> Result<u64, String> {
-        let db: Database = get_db();
-        let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
+        let tasks = Self::find_many(&ProjectTaskQuery {
+            _id: None,
+            project_id: None,
+            task_id: Some(_id.clone()),
+            area_id: None,
+            limit: None,
+            kind: None,
+        })
+        .await?
+        .map_or_else(|| Vec::<ProjectTask>::new(), |val| val);
 
-        collection
-            .delete_many(doc! { "task_id": _id }, None)
-            .await
-            .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())
-            .map(|result| result.deleted_count)
+        let mut deleted = 0;
+
+        for task in tasks.iter() {
+            deleted += Self::delete_by_id(&task._id.unwrap())
+                .await
+                .map_or_else(|_| 0, |val| val);
+        }
+
+        Ok(deleted)
     }
     pub async fn find_many(query: &ProjectTaskQuery) -> Result<Option<Vec<ProjectTask>>, String> {
         let db: Database = get_db();
@@ -794,6 +825,8 @@ impl ProjectTask {
                                 {
                                     task.value *= dependencies[index].value / 100.0;
                                     _id = dependencies[index].task_id;
+                                } else {
+                                    found = false;
                                 }
                             } else {
                                 found = false;

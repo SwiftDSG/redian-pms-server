@@ -1,16 +1,3 @@
-/*
- * Here's how project works:
- * 1. User create a project
- * 2. User will add all the necessary information such as roles, members, areas, task
- * 3. User will ada a timeline for each tasks
- * 4. User can start the project by creating a day 0 report, which is a daily report that only have a plan about the next day's work
- * 5. Project's status will change to "running" if at least one task's status is changed to running
- * 6. Project's status will change to "paused" if once a project runs and there's no tasks that has a "running" status
- * 7. Project's status will chang eto "finished" if all tasks have a status of "finished"
- * 8. Each tasks progress is calculated by every progress report's actual progress
- * 9.
- */
-
 use std::{
     ffi::OsStr,
     fs::{create_dir_all, remove_dir_all, rename},
@@ -30,9 +17,7 @@ use crate::models::{
         ProjectProgressGraphResponse, ProjectQuery, ProjectRequest, ProjectStatus,
         ProjectStatusKind,
     },
-    project_incident_report::{
-        ProjectIncidentReport, ProjectIncidentReportRequest, ProjectIncidentReportRequestQuery,
-    },
+    project_incident_report::{ProjectIncidentReport, ProjectIncidentReportRequest},
     project_progress_report::{
         ProjectProgressReport, ProjectProgressReportDocumentationRequest,
         ProjectProgressReportQuery, ProjectProgressReportRequest,
@@ -50,6 +35,10 @@ use crate::models::{
 #[derive(Deserialize, Clone)]
 pub struct ProjectTaskQueryParams {
     status: Option<ProjectTaskStatusKind>,
+}
+#[derive(Deserialize)]
+pub struct ProjectIncidentReportQueryParams {
+    pub breakdown: bool,
 }
 
 #[get("/projects")]
@@ -198,102 +187,104 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
         }
     }
 
-    let start = bases
+    let mut start_base = false;
+    let mut start = 0;
+    let mut end_base = false;
+    let mut end = Utc::now().timestamp_millis();
+
+    if let Some(date) = bases
         .iter()
         .filter(|a| a.period.is_some())
         .map(|a| a.period.clone().unwrap().start.timestamp_millis())
-        .min();
-    let end = bases
+        .min()
+    {
+        start = date;
+        start_base = true;
+    }
+    if let Some(date) = progresses.iter().map(|a| a.date.timestamp_millis()).min() {
+        if !start_base || date < start {
+            start = date;
+        }
+    }
+
+    if let Some(date) = bases
         .iter()
         .filter(|a| a.period.is_some())
         .map(|a| a.period.clone().unwrap().end.timestamp_millis())
-        .max();
-
-    let mut diff = 0;
-    let mut start_milis: i64 = Utc::now().timestamp_millis() - 86400000;
-
-    if let Some(start) = start {
-        if let Some(end) = end {
-            diff = (end - start) / 86400000 + 1;
-            start_milis = start;
+        .max()
+    {
+        end = date;
+        end_base = true;
+    }
+    if let Some(date) = progresses.iter().map(|a| a.date.timestamp_millis()).max() {
+        if !end_base || date > end {
+            end = date
         }
     }
 
     let mut datas: Vec<ProjectProgressGraphResponse> = vec![ProjectProgressGraphResponse {
-        x: start_milis - 86400000,
+        x: start - 86400000,
         y: vec![0.0, 0.0],
     }];
 
-    for i in 0..diff {
-        let date = start_milis + i * 86400000;
-        let prev_y1 = datas.last().map_or_else(|| 0.0, |v| *v.y.first().unwrap());
-        let prev_y2 = datas.last().map_or_else(|| 0.0, |v| *v.y.last().unwrap());
-        let mut y1: f64 = bases
-            .iter()
-            .filter(|a| {
-                if let Some(period) = a.period.as_ref() {
+    if start != 0 {
+        let diff = (end - start) / 86400000 + 1;
+        for i in 0..diff {
+            let date = start + i * 86400000;
+            let prev_y1 = datas.last().map_or_else(|| 0.0, |v| *v.y.first().unwrap());
+            let prev_y2 = datas.last().map_or_else(|| 0.0, |v| *v.y.last().unwrap());
+            let mut y1: f64 = bases
+                .iter()
+                .filter(|a| {
+                    if let Some(period) = a.period.as_ref() {
+                        let start = period.start.timestamp_millis();
+                        let end = period.end.timestamp_millis();
+                        date >= start && date <= end
+                    } else {
+                        false
+                    }
+                })
+                .fold(prev_y1, |a, b| {
+                    let period = b.period.as_ref().unwrap();
                     let start = period.start.timestamp_millis();
                     let end = period.end.timestamp_millis();
-                    date >= start && date <= end
-                } else {
-                    false
-                }
-            })
-            .fold(prev_y1, |a, b| {
-                let period = b.period.as_ref().unwrap();
-                let start = period.start.timestamp_millis();
-                let end = period.end.timestamp_millis();
-                let diff = (end - start) / 86400000 + 1;
-                a + (b.value / (diff as f64))
-            });
-        let mut y2 = progresses
-            .iter()
-            .filter(|a| {
-                println!("CURRENT DATE     : {:#?}", date);
-                println!("REPORT DATE      : {:#?}", a.date.timestamp_millis());
-                println!("DIV CURRENT DATE : {:#?}", date / 86400000);
-                println!(
-                    "DIV REPORT DATE  : {:#?}",
-                    a.date.timestamp_millis() / 86400000
-                );
-                date / 86400000 == a.date.timestamp_millis() / 86400000
-            })
-            .fold(prev_y2, |a, b| {
-                if let Some(actual) = &b.actual {
-                    let progress = actual.iter().fold(0.0, |c, d| {
-                        if let Some(index) = bases.iter().position(|e| e._id.unwrap() == d.task_id)
-                        {
-                            println!("DEPENDENCY INDEX   :{:#?}", index);
-                            c + d.value * bases[index].value / 100.0
-                        } else {
-                            c
-                        }
-                    });
-                    println!("ACTUAL   :{:#?}", actual);
-                    println!("PROGRESS :{:#?}", progress);
-                    println!("=================================");
-                    a + progress
-                } else {
-                    a
-                }
-            });
+                    let diff = (end - start) / 86400000 + 1;
+                    a + (b.value / (diff as f64))
+                });
+            let mut y2 = progresses
+                .iter()
+                .filter(|a| date / 86400000 == a.date.timestamp_millis() / 86400000)
+                .fold(prev_y2, |a, b| {
+                    if let Some(actual) = &b.actual {
+                        let progress = actual.iter().fold(0.0, |c, d| {
+                            if let Some(index) =
+                                bases.iter().position(|e| e._id.unwrap() == d.task_id)
+                            {
+                                c + d.value * bases[index].value / 100.0
+                            } else {
+                                c
+                            }
+                        });
+                        a + progress
+                    } else {
+                        a
+                    }
+                });
 
-        if y1 >= 99.99 {
-            y1 = 100.0
+            if y1 >= 99.99 {
+                y1 = 100.0
+            }
+            if y2 >= 99.99 {
+                y2 = 100.0
+            }
+
+            let data = ProjectProgressGraphResponse {
+                x: date,
+                y: vec![y1, y2],
+            };
+
+            datas.push(data);
         }
-        if y2 >= 99.99 {
-            y2 = 100.0
-        }
-
-        let data = ProjectProgressGraphResponse {
-            x: date,
-            y: vec![y1, y2],
-        };
-
-        println!("{:#?}", y2);
-        println!("");
-
-        datas.push(data);
     }
 
     HttpResponse::Ok().json(datas)
@@ -311,6 +302,20 @@ pub async fn get_project_members(project_id: web::Path<String>) -> HttpResponse 
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
+#[get("/projects/{project_id}/reports")]
+pub async fn get_project_reports(project_id: web::Path<String>) -> HttpResponse {
+    let project_id: ObjectId = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    match Project::find_reports(&project_id).await {
+        Ok(Some(reports)) => HttpResponse::Ok().json(reports),
+        Ok(None) => HttpResponse::NotFound().body("PROJECT_REPORT_NOT_FOUND".to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
+
 #[post("/projects")] // FINISHED
 pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest) -> HttpResponse {
     let issuer = match req.extensions().get::<UserAuthentication>() {
@@ -586,8 +591,10 @@ pub async fn create_project_report(
     let mut project_report = ProjectProgressReport {
         _id: None,
         project_id,
+        user_id: issuer_id,
         date: DateTime::from_millis(Utc::now().timestamp_millis()),
         time: payload.time,
+        member_id: payload.member_id,
         actual: payload.actual,
         plan: payload.plan,
         documentation: payload.documentation,
@@ -604,7 +611,7 @@ pub async fn create_project_report(
 pub async fn create_project_incident(
     project_id: web::Path<String>,
     payload: web::Json<ProjectIncidentReportRequest>,
-    query: web::Query<ProjectIncidentReportRequestQuery>,
+    query: web::Query<ProjectIncidentReportQueryParams>,
     req: HttpRequest,
 ) -> HttpResponse {
     let project_id = match project_id.parse() {
@@ -631,7 +638,8 @@ pub async fn create_project_incident(
     let mut project_incident = ProjectIncidentReport {
         _id: None,
         project_id,
-        user_id: payload.user_id,
+        user_id: issuer_id,
+        member_id: payload.member_id,
         kind: payload.kind,
         date: DateTime::from_millis(Utc::now().timestamp_millis()),
     };
@@ -864,9 +872,6 @@ pub async fn update_project_role(
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
     };
 
-    println!("{:#?}", project_id);
-    println!("{:#?}", role_id);
-
     let issuer_id = match req.extensions().get::<UserAuthentication>() {
         Some(issuer) => issuer._id.unwrap(),
         None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
@@ -966,7 +971,7 @@ pub async fn delete_project_area(
         Some(issuer) => issuer._id.unwrap(),
         None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
     };
-    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::DeleteTask).await {
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
 
@@ -978,6 +983,33 @@ pub async fn delete_project_area(
             }
         } else {
             HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
+        }
+    } else {
+        HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
+    }
+}
+#[delete("/projects/{project_id}/tasks/{task_id}")]
+pub async fn delete_project_task(
+    _id: web::Path<(String, String)>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let (project_id, task_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(task_id)) => (project_id, task_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::DeleteTask).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    if let Ok(Some(_)) = Project::find_by_id(&project_id).await {
+        match ProjectTask::delete_by_id(&task_id).await {
+            Ok(result) => HttpResponse::NoContent().body(result.to_string()),
+            Err(_) => HttpResponse::NotFound().body("PROJECT_TASK_NOT_FOUND".to_string()),
         }
     } else {
         HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())

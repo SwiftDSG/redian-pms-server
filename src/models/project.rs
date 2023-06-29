@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     customer::Customer,
-    project_progress_report::{ProjectProgressReport, ProjectProgressReportQuery},
+    project_incident_report::ProjectIncidentReportResponse,
+    project_progress_report::{
+        ProjectProgressReport, ProjectProgressReportQuery, ProjectProgressReportResponse,
+    },
     project_role::ProjectRoleResponse,
     project_task::{ProjectTask, ProjectTaskMinResponse, ProjectTaskQuery, ProjectTaskQueryKind},
     user::{User, UserImage},
@@ -22,6 +25,12 @@ pub enum ProjectMemberKind {
     Direct,
     Indirect,
     Support,
+}
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectReportKind {
+    Progress,
+    Incident,
 }
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -158,6 +167,14 @@ pub struct ProjectUserResponse {
     pub user: Option<Vec<ProjectMemberResponse>>,
     pub role: Option<Vec<ProjectRoleResponse>>,
 }
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectReportResponse {
+    pub date: String,
+    pub kind: ProjectReportKind,
+    pub progress: Option<ProjectProgressReportResponse>,
+    pub incident: Option<ProjectIncidentReportResponse>,
+}
+
 impl Project {
     pub async fn save(&mut self) -> Result<ObjectId, String> {
         let db: Database = get_db();
@@ -337,16 +354,8 @@ impl Project {
         };
         if start != 0 {
             let diff = (end - start) / 86400000 + 1;
-            println!("START DATE    : {:#?}", start);
-            println!("END DATE      : {:#?}", end);
-            println!("DAYS DIFF     : {:#?}", diff);
-            println!("MILIS DIFF    : {:#?}", end - start);
-            println!("=============================");
             for i in 0..diff {
                 let date = start + i * 86400000;
-                println!("DATE          : {:#?}", date);
-                println!("DAYS          : {:#?}", date / 86400000);
-                println!("=============================");
                 let prev_plan = progress.plan;
                 let prev_actual = progress.actual;
                 let mut plan: f64 = bases
@@ -369,15 +378,7 @@ impl Project {
                     });
                 let mut actual = progresses
                     .iter()
-                    .filter(|a| {
-                        println!("FILTER DATE   : {:#?}", a.date.timestamp_millis());
-                        println!(
-                            "FILTER DAYS   : {:#?}",
-                            a.date.timestamp_millis() / 86400000
-                        );
-                        println!("=============================");
-                        date / 86400000 == a.date.timestamp_millis() / 86400000
-                    })
+                    .filter(|a| date / 86400000 == a.date.timestamp_millis() / 86400000)
                     .fold(prev_actual, |a, b| {
                         if let Some(actual) = &b.actual {
                             let progress = actual.iter().fold(0.0, |c, d| {
@@ -406,7 +407,6 @@ impl Project {
                 }
 
                 progress = ProjectProgressResponse { plan, actual };
-                println!("=============================\n\n");
             }
         }
 
@@ -775,6 +775,754 @@ impl Project {
             if let Some(Ok(doc)) = cursor.next().await {
                 let user = from_document::<ProjectUserResponse>(doc).unwrap();
                 Ok(Some(user))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+    pub async fn find_reports(
+        _id: &ObjectId,
+    ) -> Result<Option<Vec<ProjectReportResponse>>, String> {
+        let db: Database = get_db();
+        let collection: Collection<Project> = db.collection::<Project>("projects");
+
+        let mut pipeline = Vec::<mongodb::bson::Document>::new();
+        let mut reports = Vec::<ProjectReportResponse>::new();
+        let mut dependencies: Vec<ProjectTask> = Vec::new();
+
+        if let Ok(Some(tasks)) = ProjectTask::find_many(&ProjectTaskQuery {
+            _id: None,
+            project_id: Some(*_id),
+            task_id: None,
+            area_id: None,
+            limit: None,
+            kind: Some(ProjectTaskQueryKind::Dependency),
+        })
+        .await
+        {
+            dependencies = tasks;
+        }
+
+        pipeline.push(doc! {
+            "$match": {
+                "$expr": {
+                    "$eq": ["$_id", to_bson::<ObjectId>(_id).unwrap()]
+                }
+            }
+        });
+        pipeline.push(doc! {
+            "$lookup": {
+                "from": "project-reports",
+                "as": "progress",
+                "let": {
+                    "project": {
+                        "_id": "$_id",
+                        "name": "$name"
+                    },
+                    "member": "$member"
+                },
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$eq": ["$project_id", "$$project._id"]
+                            }
+                        }
+                    },
+                    {
+                        "$lookup": {
+                            "from": "users",
+                            "as": "user",
+                            "let": {
+                                "user_id": "$user_id"
+                            },
+                            "pipeline": [
+                                {
+                                    "$match": {
+                                        "$expr": {
+                                            "$eq": ["$_id", "$$user_id"]
+                                        }
+                                    }
+                                },
+                                {
+                                    "$project": {
+                                        "_id": {
+                                            "$toString": "$_id"
+                                        },
+                                        "name": "$name"
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "$lookup": {
+                            "from": "users",
+                            "as": "users",
+                            "let": {
+                                "user": {
+                                    "$cond": [
+                                        "$member_id",
+                                        {
+                                            "$map": {
+                                                "input": {
+                                                    "$filter": {
+                                                        "input": {
+                                                            "$filter": {
+                                                                "input": "$$member",
+                                                                "cond": {
+                                                                    "$ne": ["$$this.kind", "support"]
+                                                                }
+                                                            }
+                                                        },
+                                                        "cond": {
+                                                            "$in": [
+                                                                "$$this._id",
+                                                                {
+                                                                    "$cond": [
+                                                                        "$member_id",
+                                                                        "$member_id",
+                                                                        []
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    }
+                                                },
+                                                "in": {
+                                                    "_id": "$$this._id",
+                                                    "kind": "$$this.kind",
+                                                    "role_id": "$$this.role_id"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "_id": []
+                                        }
+                                    ]
+                                }
+                            },
+                            "pipeline": [
+                                {
+                                    "$match": {
+                                        "$expr": {
+                                            "$in": ["$_id", "$$user._id"]
+                                        }
+                                    }
+                                },
+                                {
+                                    "$project": {
+                                        "role_id": {
+                                            "$arrayElemAt": [
+                                                "$$user.role_id",
+                                                {
+                                                    "$indexOfArray": ["$$user._id", "$_id"]
+                                                }
+                                            ]
+                                        },
+                                        "kind": {
+                                            "$arrayElemAt": [
+                                                "$$user.kind",
+                                                {
+                                                    "$indexOfArray": ["$$user._id", "$_id"]
+                                                }
+                                            ]
+                                        },
+                                        "name": "$name",
+                                        "image": "$image"
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "$project": {
+                            "user": {
+                                "$first": "$user"
+                            },
+                            "project": {
+                                "_id": { "$toString": "$$project._id" },
+                                "name": "$$project.name"
+                            },
+                            "date": { "$toString": "$date" },
+                            "time": "$time",
+                            "member": {
+                                "$concatArrays": [
+                                    "$users",
+                                    {
+                                        "$map": {
+                                            "input": {
+                                                "$filter": {
+                                                    "input": {
+                                                        "$filter": {
+                                                            "input": "$$member",
+                                                            "cond": {
+                                                                "$eq": ["$$this.kind", "support"]
+                                                            }
+                                                        }
+                                                    },
+                                                    "cond": {
+                                                        "$in": [
+                                                            "$$this._id",
+                                                            {
+                                                                "$cond": [
+                                                                    "$member_id",
+                                                                    "$member_id",
+                                                                    []
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            },
+                                            "in": {
+                                                "_id": "$$this._id",
+                                                "name": "$$this.name",
+                                                "kind": "$$this.kind",
+                                                "role_id": "$$this.role_id"
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            "actual": "$actual",
+                            "plan": "$plan",
+                            "weather": "$weather",
+                            "documentation": "$documentation",
+                        }
+                    },
+                    {
+                        "$lookup": {
+                            "from": "project-roles",
+                            "as": "roles",
+                            "let": {
+                                "role_id": {
+                                    "$reduce": {
+                                        "input": "$member.role_id",
+                                        "initialValue": [],
+                                        "in": {
+                                            "$concatArrays": [
+                                                "$$value",
+                                                {
+                                                    "$filter": {
+                                                        "input": "$$this",
+                                                        "as": "role_id",
+                                                        "cond": {
+                                                            "$ne": [
+                                                                {
+                                                                    "$in": ["$$role_id", "$$value"]
+                                                                },
+                                                                to_bson::<bool>(&true).unwrap()
+                                                            ]
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            "pipeline": [
+                                {
+                                    "$match": {
+                                        "$expr": {
+                                            "$in": ["$_id", "$$role_id"]
+                                        }
+                                    }
+                                },
+                                {
+                                    "$project": {
+                                        "name": "$name",
+                                        "permission": "$permission",
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": {
+                                "$toString": "$_id"
+                            },
+                            "kind": "progress",
+                            "user": "$user",
+                            "project": "$project",
+                            "date": "$date",
+                            "time": "$time",
+                            "member": {
+                                "$map": {
+                                    "input": "$member",
+                                    "in": {
+                                        "_id": { "$toString": "$$this._id" },
+                                        "name": "$$this.name",
+                                        "kind": "$$this.kind",
+                                        "image": "$$this.image",
+                                        "role": {
+                                            "$map": {
+                                                "input": "$$this.role_id",
+                                                "as": "role_id",
+                                                "in": {
+                                                    "_id": {
+                                                        "$toString": "$$role_id"
+                                                    },
+                                                    "name": {
+                                                        "$arrayElemAt": [
+                                                            "$roles.name",
+                                                            {
+                                                                "$indexOfArray": [
+                                                                    "$roles._id",
+                                                                    "$$role_id"
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    "permission": {
+                                                        "$arrayElemAt": [
+                                                            "$roles.permission",
+                                                            {
+                                                                "$indexOfArray": [
+                                                                    "$roles._id",
+                                                                    "$$role_id"
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "actual": "$actual",
+                            "plan": "$plan",
+                            "weather": "$weather",
+                            "documentation": "$documentation",
+                        }
+                    }
+                ]
+            }
+        });
+        pipeline.push(doc! {
+            "$lookup": {
+                "from": "project-incident",
+                "as": "incident",
+                "let": {
+                    "project": {
+                        "_id": "$_id",
+                        "name": "$name"
+                    },
+                    "member": "$member"
+                },
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$eq": ["$project_id", "$$project._id"]
+                            }
+                        }
+                    },
+                    {
+                        "$lookup": {
+                            "from": "users",
+                            "as": "user",
+                            "let": {
+                                "user_id": "$user_id"
+                            },
+                            "pipeline": [
+                                {
+                                    "$match": {
+                                        "$expr": {
+                                            "$eq": ["$_id", "$$user_id"]
+                                        }
+                                    }
+                                },
+                                {
+                                    "$project": {
+                                        "_id": {
+                                            "$toString": "$_id"
+                                        },
+                                        "name": "$name"
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "$lookup": {
+                            "from": "users",
+                            "as": "users",
+                            "let": {
+                                "user": {
+                                    "$cond": [
+                                        "$member_id",
+                                        {
+                                            "$map": {
+                                                "input": {
+                                                    "$filter": {
+                                                        "input": {
+                                                            "$filter": {
+                                                                "input": "$$member",
+                                                                "cond": {
+                                                                    "$ne": ["$$this.kind", "support"]
+                                                                }
+                                                            }
+                                                        },
+                                                        "cond": {
+                                                            "$in": [
+                                                                "$$this._id",
+                                                                {
+                                                                    "$cond": [
+                                                                        "$member_id",
+                                                                        "$member_id",
+                                                                        []
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    }
+                                                },
+                                                "in": {
+                                                    "_id": "$$this._id",
+                                                    "kind": "$$this.kind",
+                                                    "role_id": "$$this.role_id"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "_id": []
+                                        }
+                                    ]
+                                }
+                            },
+                            "pipeline": [
+                                {
+                                    "$match": {
+                                        "$expr": {
+                                            "$in": [ "$_id", "$$user._id" ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "$project": {
+                                        "role_id": {
+                                            "$arrayElemAt": [
+                                                "$$user.role_id",
+                                                {
+                                                    "$indexOfArray": ["$$user._id", "$_id"]
+                                                }
+                                            ]
+                                        },
+                                        "kind": {
+                                            "$arrayElemAt": [
+                                                "$$user.kind",
+                                                {
+                                                    "$indexOfArray": ["$$user._id", "$_id"]
+                                                }
+                                            ]
+                                        },
+                                        "name": "$name",
+                                        "image": "$image"
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "$project": {
+                            "user": {
+                                "$first": "$user"
+                            },
+                            "project": {
+                                "_id": { "$toString": "$$project._id" },
+                                "name": "$$project.name"
+                            },
+                            "date": { "$toString": "$date" },
+                            "kind": "$kind",
+                            "member": {
+                                "$concatArrays": [
+                                    "$users",
+                                    {
+                                        "$map": {
+                                            "input": {
+                                                "$filter": {
+                                                    "input": {
+                                                        "$filter": {
+                                                            "input": "$$member",
+                                                            "cond": {
+                                                                "$eq": ["$$this.kind", "support"]
+                                                            }
+                                                        }
+                                                    },
+                                                    "cond": {
+                                                        "$in": [
+                                                            "$$this._id", 
+                                                            {
+                                                                "$cond": [
+                                                                    "$member_id",
+                                                                    "$member_id",
+                                                                    []
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            },
+                                            "in": {
+                                                "_id": "$$this._id",
+                                                "name": "$$this.name",
+                                                "kind": "$$this.kind",
+                                                "role_id": "$$this.role_id"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "$lookup": {
+                            "from": "project-roles",
+                            "as": "roles",
+                            "let": {
+                                "role_id": {
+                                    "$reduce": {
+                                        "input": "$member.role_id",
+                                        "initialValue": [],
+                                        "in": {
+                                            "$concatArrays": [
+                                                "$$value",
+                                                {
+                                                    "$filter": {
+                                                        "input": "$$this",
+                                                        "as": "role_id",
+                                                        "cond": {
+                                                            "$ne": [
+                                                                {
+                                                                    "$in": ["$$role_id", "$$value"]
+                                                                },
+                                                                to_bson::<bool>(&true).unwrap()
+                                                            ]
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            "pipeline": [
+                                {
+                                    "$match": {
+                                        "$expr": {
+                                            "$in": ["$_id", "$$role_id"]
+                                        }
+                                    }
+                                },
+                                {
+                                    "$project": {
+                                        "name": "$name",
+                                        "permission": "$permission",
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": {
+                                "$toString": "$_id"
+                            },
+                            "user": "$user",
+                            "project": "$project",
+                            "date": "$date",
+                            "kind": "$kind",
+                            "member": {
+                                "$map": {
+                                    "input": "$member",
+                                    "in": {
+                                        "_id": { "$toString": "$$this._id" },
+                                        "name": "$$this.name",
+                                        "kind": "$$this.kind",
+                                        "image": "$$this.image",
+                                        "role": {
+                                            "$map": {
+                                                "input": "$$this.role_id",
+                                                "as": "role_id",
+                                                "in": {
+                                                    "_id": {
+                                                        "$toString": "$$role_id"
+                                                    },
+                                                    "name": {
+                                                        "$arrayElemAt": [
+                                                            "$roles.name",
+                                                            {
+                                                                "$indexOfArray": [
+                                                                    "$roles._id",
+                                                                    "$$role_id"
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    "permission": {
+                                                        "$arrayElemAt": [
+                                                            "$roles.permission",
+                                                            {
+                                                                "$indexOfArray": [
+                                                                    "$roles._id",
+                                                                    "$$role_id"
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    }
+                ]
+            }
+        });
+        pipeline.push(doc! {
+            "$project": {
+                "report": {
+                    "$concatArrays": ["$progress", "$incident"]
+                }
+            }
+        });
+        pipeline.push(doc! {
+            "$unwind": "$report"
+        });
+        pipeline.push(doc! {
+            "$project": {
+                "date": "$report.date",
+                "kind": {
+                    "$cond": [
+                        {
+                            "$eq": ["$report.kind", "progress"]
+                        },
+                        "progress",
+                        "incident"
+                    ]
+                },
+                "progress": {
+                    "$cond": [
+                        {
+                            "$eq": ["$report.kind", "progress"]
+                        },
+                        {
+                            "_id": "$report._id",
+                            "user": "$report.user",
+                            "project": "$report.project",
+                            "date": "$report.date",
+                            "time": "$report.time",
+                            "member": "$report.member",
+                            "actual": {
+                                "$cond": [
+                                    "$report.actual",
+                                    "$report.actual",
+                                    []
+                                ]
+                            },
+                            "plan": {
+                                "$cond": [
+                                    "$report.plan",
+                                    "$report.plan",
+                                    []
+                                ]
+                            },
+                            "weather": {
+                                "$cond": [
+                                    "$report.weather",
+                                    "$report.weather",
+                                    []
+                                ]
+                            },
+                            "documentation": {
+                                "$cond": [
+                                    "$report.documentation",
+                                    "$report.documentation",
+                                    []
+                                ]
+                            },
+                            "progress": to_bson::<f64>(&0.0).unwrap(),
+                        },
+                        to_bson::<Option<ProjectProgressReportResponse>>(&None).unwrap()
+                    ]
+                },
+                "incident": {
+                    "$cond": [
+                        {
+                            "$ne": ["$report.kind", "progress"]
+                        },
+                        {
+                            "_id": "$report._id",
+                            "user": "$report.user",
+                            "project": "$report.project",
+                            "date": "$report.date",
+                            "kind": "$report.kind",
+                            "member": "$report.member",
+                        },
+                        to_bson::<Option<ProjectIncidentReportResponse>>(&None).unwrap()
+                    ]
+                },
+            }
+        });
+        pipeline.push(doc! {
+            "$sort": {
+                "date": -1
+            }
+        });
+
+        if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
+            while let Some(Ok(doc)) = cursor.next().await {
+                let report = from_document::<ProjectReportResponse>(doc).unwrap();
+                reports.push(report);
+            }
+            if !reports.is_empty() {
+                if !dependencies.is_empty() {
+                    for report in reports
+                        .iter_mut()
+                        .filter(|a| a.kind == ProjectReportKind::Progress)
+                    {
+                        if let Some(progress) = report.progress.as_mut() {
+                            if let Some(tasks) = &progress.actual {
+                                for task in tasks.iter() {
+                                    if let Ok(Some(base)) =
+                                        ProjectTask::find_by_id(&task.task_id).await
+                                    {
+                                        let mut _id = base.task_id;
+                                        let mut found = true;
+                                        let mut count = task.value * base.value / 100.0;
+
+                                        while found {
+                                            if let Some(task_id) = _id {
+                                                if let Some(index) = dependencies
+                                                    .iter()
+                                                    .position(|a| a._id.unwrap() == task_id)
+                                                {
+                                                    count *= dependencies[index].value / 100.0;
+                                                    _id = dependencies[index].task_id;
+                                                } else {
+                                                    found = false;
+                                                }
+                                            } else {
+                                                found = false;
+                                            }
+                                        }
+
+                                        progress.progress += count;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Some(reports))
             } else {
                 Ok(None)
             }

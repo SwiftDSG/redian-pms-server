@@ -21,6 +21,8 @@ use pwhash::bcrypt;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs::read_to_string, rc::Rc, str::FromStr};
 
+use super::role::RoleResponse;
+
 static mut KEYS: BTreeMap<String, String> = BTreeMap::new();
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,6 +60,7 @@ pub struct UserRefresh {
 #[derive(Debug)]
 pub struct UserQuery {
     pub _id: Option<ObjectId>,
+    pub role_id: Option<ObjectId>,
     pub email: Option<String>,
     pub limit: Option<usize>,
 }
@@ -71,9 +74,10 @@ pub struct UserRequest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserResponse {
     pub _id: String,
-    pub role_id: Vec<ObjectId>,
+    pub role: Vec<RoleResponse>,
     pub name: String,
     pub email: String,
+    pub image: Option<UserImage>,
 }
 #[derive(Debug)]
 pub struct UserAuthenticationData {
@@ -106,6 +110,30 @@ impl User {
             Err("HASHING_FAILED".to_string())
         }
     }
+    pub async fn update(&self) -> Result<ObjectId, String> {
+        let db: Database = get_db();
+        let collection: Collection<User> = db.collection::<User>("users");
+
+        collection
+            .update_one(
+                doc! { "_id": self._id.unwrap() },
+                doc! { "$set": to_bson::<Self>(self).unwrap() },
+                None,
+            )
+            .await
+            .map_err(|_| "UPDATE_FAILED".to_string())
+            .map(|_| self._id.unwrap())
+    }
+    pub async fn delete(&self) -> Result<u64, String> {
+        let db: Database = get_db();
+        let collection: Collection<User> = db.collection::<User>("users");
+
+        collection
+            .delete_one(doc! { "_id": self._id.unwrap() }, None)
+            .await
+            .map_err(|_| "USER_NOT_FOUND".to_string())
+            .map(|result| result.deleted_count)
+    }
     pub async fn find_many(query: &UserQuery) -> Result<Vec<UserResponse>, String> {
         let db: Database = get_db();
         let collection: Collection<User> = db.collection::<User>("users");
@@ -113,6 +141,15 @@ impl User {
         let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
         let mut users: Vec<UserResponse> = Vec::new();
 
+        if let Some(_id) = query.role_id {
+            pipeline.push(doc! {
+                "$match": {
+                    "$expr": {
+                        "$in": [to_bson::<ObjectId>(&_id).unwrap(), "$role_id"]
+                    }
+                }
+            })
+        }
         if let Some(limit) = query.limit {
             pipeline.push(doc! {
                 "$limit": to_bson::<usize>(&limit).unwrap()
@@ -120,13 +157,39 @@ impl User {
         }
 
         pipeline.push(doc! {
+            "$lookup": {
+                "from": "roles",
+                "as": "role",
+                "let": {
+                    "role_id": "$role_id"
+                },
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$in": ["$_id", "$$role_id"]
+                            }
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": { "$toString": "$_id" },
+                            "name": "$name",
+                            "permission": "$permission",
+                        }
+                    }
+                ]
+            }
+        });
+        pipeline.push(doc! {
             "$project": {
                 "_id": {
                     "$toString": "$_id"
                 },
                 "name": "$name",
                 "email": "$email",
-                "role_id": "$role_id",
+                "role": "$role",
+                "image": "$image",
             }
         });
 
@@ -175,7 +238,7 @@ impl UserCredential {
 
         let claim_access: UserClaim = UserClaim {
             sub: ObjectId::to_string(&user._id.unwrap()),
-            exp: Utc::now().timestamp() + 10,
+            exp: Utc::now().timestamp() + 1800,
             iss: "Redian".to_string(),
             aud: std::env::var("BASE_URL").unwrap(),
         };
@@ -227,7 +290,7 @@ impl UserCredential {
 
         let claim_access: UserClaim = UserClaim {
             sub: ObjectId::to_string(&user._id.unwrap()),
-            exp: Utc::now().timestamp() + 10,
+            exp: Utc::now().timestamp() + 1800,
             iss: "Redian".to_string(),
             aud: std::env::var("BASE_URL").unwrap(),
         };
