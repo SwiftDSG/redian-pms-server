@@ -7,7 +7,7 @@ use std::{
 
 use actix_multipart::form::MultipartForm;
 use actix_web::{delete, get, post, put, web, HttpMessage, HttpRequest, HttpResponse};
-use chrono::Utc;
+use chrono::{FixedOffset, Local, NaiveDateTime, Utc};
 use mongodb::bson::{doc, oid::ObjectId, to_bson, DateTime};
 use serde::Deserialize;
 
@@ -19,8 +19,9 @@ use crate::models::{
     },
     project_incident_report::{ProjectIncidentReport, ProjectIncidentReportRequest},
     project_progress_report::{
-        ProjectProgressReport, ProjectProgressReportDocumentationRequest,
-        ProjectProgressReportQuery, ProjectProgressReportRequest,
+        ProjectProgressReport, ProjectProgressReportDocumentation,
+        ProjectProgressReportDocumentationMultipartRequest, ProjectProgressReportQuery,
+        ProjectProgressReportRequest,
     },
     project_role::{ProjectRole, ProjectRolePermission, ProjectRoleRequest},
     project_task::{
@@ -39,6 +40,10 @@ pub struct ProjectTaskQueryParams {
 #[derive(Deserialize)]
 pub struct ProjectIncidentReportQueryParams {
     pub breakdown: bool,
+}
+#[derive(Deserialize)]
+pub struct ProjectStatusQueryParams {
+    pub status: ProjectStatusKind,
 }
 
 #[get("/projects")]
@@ -229,6 +234,7 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
 
     if start != 0 {
         let diff = (end - start) / 86400000 + 1;
+        let offset = FixedOffset::east_opt(Local::now().offset().local_minus_utc()).unwrap();
         for i in 0..diff {
             let date = start + i * 86400000;
             let prev_y1 = datas.last().map_or_else(|| 0.0, |v| *v.y.first().unwrap());
@@ -253,7 +259,19 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
                 });
             let mut y2 = progresses
                 .iter()
-                .filter(|a| date / 86400000 == a.date.timestamp_millis() / 86400000)
+                .filter(|a| {
+                    let current_date = chrono::DateTime::<Local>::from_utc(
+                        NaiveDateTime::from_timestamp_opt(date / 1000, 0).unwrap(),
+                        offset,
+                    );
+                    let progress_date = chrono::DateTime::<Local>::from_utc(
+                        NaiveDateTime::from_timestamp_opt(a.date.timestamp_millis() / 1000, 0)
+                            .unwrap(),
+                        offset,
+                    );
+
+                    current_date.date_naive() == progress_date.date_naive()
+                })
                 .fold(prev_y2, |a, b| {
                     if let Some(actual) = &b.actual {
                         let progress = actual.iter().fold(0.0, |c, d| {
@@ -315,6 +333,36 @@ pub async fn get_project_reports(project_id: web::Path<String>) -> HttpResponse 
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
+#[get("/projects/{project_id}/reports/{report_id}")]
+pub async fn get_project_report(
+    _id: web::Path<(String, String)>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let (project_id, report_id) = match (_id.0.parse(), _id.1.parse()) {
+        (Ok(project_id), Ok(task_id)) => (project_id, task_id),
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(
+        &project_id,
+        &issuer_id,
+        &ProjectRolePermission::CreateReport,
+    )
+    .await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    match ProjectProgressReport::find_detail_by_id(&report_id).await {
+        Ok(Some(report)) => HttpResponse::Ok().json(report),
+        Ok(None) => HttpResponse::NotFound().body("PROJECT_REPORT_NOT_FOUND".to_string()),
+        Err(error) => HttpResponse::InternalServerError().body(error),
+    }
+}
 
 #[post("/projects")] // FINISHED
 pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest) -> HttpResponse {
@@ -337,6 +385,7 @@ pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest
     let mut project: Project = Project {
         _id: None,
         customer_id: payload.customer_id,
+        user_id: issuer._id.unwrap(),
         name: payload.name,
         code: payload.code,
         period: ProjectPeriod {
@@ -352,6 +401,11 @@ pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest
         area: None,
         leave: payload.leave,
     };
+
+    if let Some(_id) = payload.user_id {
+        project.user_id = _id;
+    }
+
     match project.save().await {
         Ok(project_id) => {
             let mut project_role: ProjectRole = ProjectRole {
@@ -597,12 +651,24 @@ pub async fn create_project_report(
         member_id: payload.member_id,
         actual: payload.actual,
         plan: payload.plan,
-        documentation: payload.documentation,
+        documentation: None,
         weather: payload.weather,
     };
 
+    if let Some(documentation) = payload.documentation {
+        let docs: Vec<ProjectProgressReportDocumentation> = documentation
+            .iter()
+            .map(|a| ProjectProgressReportDocumentation {
+                description: a.description.clone(),
+                extension: Some(a.extension.clone()),
+                _id: Some(ObjectId::new()),
+            })
+            .collect();
+        project_report.documentation = Some(docs);
+    }
+
     match project_report.save().await {
-        Ok(report_id) => HttpResponse::Ok().body(report_id.to_string()),
+        Ok(report_id) => HttpResponse::Created().body(report_id.to_string()),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
@@ -645,11 +711,55 @@ pub async fn create_project_incident(
     };
 
     match project_incident.save(query.breakdown).await {
-        Ok(incident_id) => HttpResponse::Ok().body(incident_id.to_string()),
+        Ok(incident_id) => HttpResponse::Created().body(incident_id.to_string()),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
 
+#[put("/projects/{project_id}/status")]
+pub async fn update_project_status(
+    _id: web::Path<String>,
+    query: web::Query<ProjectStatusQueryParams>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let project_id = match _id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(
+        &project_id,
+        &issuer_id,
+        &ProjectRolePermission::CreateIncident,
+    )
+    .await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    if let Ok(Some(mut project)) = Project::find_by_id(&project_id).await {
+        if query.status != ProjectStatusKind::Running {
+            return HttpResponse::BadRequest().body("INVALID_STATUS".to_string());
+        }
+
+        if project.status.first().unwrap().kind != ProjectStatusKind::Breakdown
+            && project.status.first().unwrap().kind != ProjectStatusKind::Paused
+        {
+            return HttpResponse::BadRequest().body("PROJECT_STATUS_INVALID".to_string());
+        }
+
+        match project.update_status(query.status.clone(), None).await {
+            Ok(project_id) => HttpResponse::Ok().body(project_id.to_string()),
+            Err(error) => HttpResponse::InternalServerError().body(error),
+        }
+    } else {
+        return HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string());
+    }
+}
 #[put("/projects/{project_id}/tasks/{task_id}")] // FINISHED
 pub async fn update_project_task(
     _id: web::Path<(String, String)>,
@@ -694,7 +804,6 @@ pub async fn update_project_task(
         HttpResponse::NotFound().body("PROJECT_TASK_NOT_FOUND".to_string())
     }
 }
-
 #[put("/projects/{project_id}/tasks/{task_id}/status")]
 pub async fn update_project_task_status(
     _id: web::Path<(String, String)>,
@@ -763,7 +872,7 @@ pub async fn update_project_task_period(
 #[put("/projects/{project_id}/reports/{report_id}")] // REDO ALL CHANGES WHEN FAILED
 pub async fn update_project_report(
     _id: web::Path<(String, String)>,
-    form: MultipartForm<ProjectProgressReportDocumentationRequest>,
+    form: MultipartForm<ProjectProgressReportDocumentationMultipartRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
     let (project_id, report_id) = match (_id.0.parse(), _id.1.parse()) {

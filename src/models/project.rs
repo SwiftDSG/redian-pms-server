@@ -1,6 +1,6 @@
 use crate::database::get_db;
 
-use chrono::Utc;
+use chrono::{FixedOffset, Local, NaiveDateTime, Utc};
 use futures::stream::StreamExt;
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_bson, DateTime},
@@ -12,7 +12,7 @@ use super::{
     customer::Customer,
     project_incident_report::ProjectIncidentReportResponse,
     project_progress_report::{
-        ProjectProgressReport, ProjectProgressReportQuery, ProjectProgressReportResponse,
+        ProjectProgressReport, ProjectProgressReportMinResponse, ProjectProgressReportQuery,
     },
     project_role::ProjectRoleResponse,
     project_task::{ProjectTask, ProjectTaskMinResponse, ProjectTaskQuery, ProjectTaskQueryKind},
@@ -47,6 +47,7 @@ pub enum ProjectStatusKind {
 pub struct Project {
     pub _id: Option<ObjectId>,
     pub customer_id: ObjectId,
+    pub user_id: ObjectId,
     pub name: String,
     pub code: String,
     pub period: ProjectPeriod,
@@ -90,6 +91,7 @@ pub struct ProjectQuery {
 #[derive(Debug, Deserialize)]
 pub struct ProjectRequest {
     pub customer_id: ObjectId,
+    pub user_id: Option<ObjectId>,
     pub name: String,
     pub code: String,
     pub period: ProjectPeriodRequest,
@@ -111,6 +113,7 @@ pub struct ProjectPeriodRequest {
 pub struct ProjectMinResponse {
     pub _id: String,
     pub customer: ProjectCustomerResponse,
+    pub user: ProjectCustomerResponse,
     pub name: String,
     pub code: String,
     pub period: ProjectPeriodResponse,
@@ -171,7 +174,7 @@ pub struct ProjectUserResponse {
 pub struct ProjectReportResponse {
     pub date: String,
     pub kind: ProjectReportKind,
-    pub progress: Option<ProjectProgressReportResponse>,
+    pub progress: Option<ProjectProgressReportMinResponse>,
     pub incident: Option<ProjectIncidentReportResponse>,
 }
 
@@ -354,6 +357,7 @@ impl Project {
         };
         if start != 0 {
             let diff = (end - start) / 86400000 + 1;
+            let offset = FixedOffset::east_opt(Local::now().offset().local_minus_utc()).unwrap();
             for i in 0..diff {
                 let date = start + i * 86400000;
                 let prev_plan = progress.plan;
@@ -378,7 +382,19 @@ impl Project {
                     });
                 let mut actual = progresses
                     .iter()
-                    .filter(|a| date / 86400000 == a.date.timestamp_millis() / 86400000)
+                    .filter(|a| {
+                        let current_date = chrono::DateTime::<Local>::from_utc(
+                            NaiveDateTime::from_timestamp_opt(date / 1000, 0).unwrap(),
+                            offset,
+                        );
+                        let progress_date = chrono::DateTime::<Local>::from_utc(
+                            NaiveDateTime::from_timestamp_opt(a.date.timestamp_millis() / 1000, 0)
+                                .unwrap(),
+                            offset,
+                        );
+
+                        current_date.date_naive() == progress_date.date_naive()
+                    })
                     .fold(prev_actual, |a, b| {
                         if let Some(actual) = &b.actual {
                             let progress = actual.iter().fold(0.0, |c, d| {
@@ -444,6 +460,24 @@ impl Project {
             }
         });
         pipeline.push(doc! {
+            "$lookup": {
+                "from": "users",
+                "let": {
+                    "user_id": "$user_id"
+                },
+                "as": "users",
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$eq": ["$_id", "$$user_id"]
+                            }
+                        }
+                    }
+                ]
+            }
+        });
+        pipeline.push(doc! {
             "$project": {
                 "_id": {
                     "$toString": "$_id"
@@ -454,6 +488,14 @@ impl Project {
                     },
                     "name": {
                         "$first": "$customers.name"
+                    }
+                },
+                "user": {
+                    "_id": {
+                        "$toString": "$user_id"
+                    },
+                    "name": {
+                        "$first": "$users.name"
                     }
                 },
                 "name": "$name",
@@ -534,12 +576,41 @@ impl Project {
                 }
             },
             doc! {
+                "$lookup": {
+                    "from": "users",
+                    "let": {
+                        "user_id": "$user_id"
+                    },
+                    "as": "users",
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {
+                                    "$eq": ["$_id", "$$user_id"]
+                                }
+                            }
+                        },
+                        {
+                            "$project": {
+                                "_id": {
+                                    "$toString": "$_id"
+                                },
+                                "name": "$name"
+                            }
+                        }
+                    ]
+                }
+            },
+            doc! {
                 "$project": {
                     "_id": {
                         "$toString": "$_id"
                     },
                     "customer": {
                         "$first": "$customers"
+                    },
+                    "user": {
+                        "$first": "$users"
                     },
                     "name": "$name",
                     "code": "$code",
@@ -1106,7 +1177,7 @@ impl Project {
         });
         pipeline.push(doc! {
             "$lookup": {
-                "from": "project-incident",
+                "from": "project-incidents",
                 "as": "incident",
                 "let": {
                     "project": {
@@ -1451,7 +1522,7 @@ impl Project {
                             },
                             "progress": to_bson::<f64>(&0.0).unwrap(),
                         },
-                        to_bson::<Option<ProjectProgressReportResponse>>(&None).unwrap()
+                        to_bson::<Option<ProjectProgressReportMinResponse>>(&None).unwrap()
                     ]
                 },
                 "incident": {
@@ -1484,39 +1555,36 @@ impl Project {
                 reports.push(report);
             }
             if !reports.is_empty() {
-                if !dependencies.is_empty() {
-                    for report in reports
-                        .iter_mut()
-                        .filter(|a| a.kind == ProjectReportKind::Progress)
-                    {
-                        if let Some(progress) = report.progress.as_mut() {
-                            if let Some(tasks) = &progress.actual {
-                                for task in tasks.iter() {
-                                    if let Ok(Some(base)) =
-                                        ProjectTask::find_by_id(&task.task_id).await
-                                    {
-                                        let mut _id = base.task_id;
-                                        let mut found = true;
-                                        let mut count = task.value * base.value / 100.0;
+                for report in reports
+                    .iter_mut()
+                    .filter(|a| a.kind == ProjectReportKind::Progress)
+                {
+                    if let Some(progress) = report.progress.as_mut() {
+                        if let Some(tasks) = &progress.actual {
+                            for task in tasks.iter() {
+                                if let Ok(Some(base)) = ProjectTask::find_by_id(&task.task_id).await
+                                {
+                                    let mut _id = base.task_id;
+                                    let mut found = true;
+                                    let mut count = task.value * base.value / 100.0;
 
-                                        while found {
-                                            if let Some(task_id) = _id {
-                                                if let Some(index) = dependencies
-                                                    .iter()
-                                                    .position(|a| a._id.unwrap() == task_id)
-                                                {
-                                                    count *= dependencies[index].value / 100.0;
-                                                    _id = dependencies[index].task_id;
-                                                } else {
-                                                    found = false;
-                                                }
+                                    while found {
+                                        if let Some(task_id) = _id {
+                                            if let Some(index) = dependencies
+                                                .iter()
+                                                .position(|a| a._id.unwrap() == task_id)
+                                            {
+                                                count *= dependencies[index].value / 100.0;
+                                                _id = dependencies[index].task_id;
                                             } else {
                                                 found = false;
                                             }
+                                        } else {
+                                            found = false;
                                         }
-
-                                        progress.progress += count;
                                     }
+
+                                    progress.progress += count;
                                 }
                             }
                         }

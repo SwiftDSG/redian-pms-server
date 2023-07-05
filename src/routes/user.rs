@@ -5,7 +5,9 @@ use std::str::FromStr;
 
 use crate::models::{
     role::{Role, RolePermission},
-    user::{User, UserAuthentication, UserCredential, UserQuery, UserRefresh, UserRequest},
+    user::{
+        User, UserAuthentication, UserCredential, UserQuery, UserRefresh, UserRequest, UserResponse,
+    },
 };
 
 #[get("/users")]
@@ -90,10 +92,7 @@ pub async fn create_user(payload: web::Json<UserRequest>, req: HttpRequest) -> H
     } else {
         match Role::delete_many().await {
             Ok(_) => (),
-            Err(error) => {
-                println!("{:#?}", error);
-                return HttpResponse::InternalServerError().body(error);
-            }
+            Err(error) => return HttpResponse::InternalServerError().body(error),
         }
         if Role::delete_many().await.is_err() {
             return HttpResponse::InternalServerError().body("UNABLE_TO_DELETE_ROLES");
@@ -128,7 +127,7 @@ pub async fn login(payload: web::Json<UserCredential>) -> HttpResponse {
         Ok((atk, rtk, user)) => HttpResponse::Ok().json(doc! {
             "atk": to_bson::<String>(&atk).unwrap(),
             "rtk": to_bson::<String>(&rtk).unwrap(),
-            "user": to_bson::<User>(&user).unwrap()
+            "user": to_bson::<UserResponse>(&user).unwrap()
         }),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
@@ -141,7 +140,7 @@ pub async fn refresh(payload: web::Json<UserRefresh>) -> HttpResponse {
         Ok((atk, rtk, user)) => HttpResponse::Ok().json(doc! {
             "atk": to_bson::<String>(&atk).unwrap(),
             "rtk": to_bson::<String>(&rtk).unwrap(),
-            "user": to_bson::<User>(&user).unwrap()
+            "user": to_bson::<UserResponse>(&user).unwrap()
         }),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }

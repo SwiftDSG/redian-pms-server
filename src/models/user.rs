@@ -225,10 +225,71 @@ impl User {
             .await
             .map_err(|_| "USER_NOT_FOUND".to_string())
     }
+    pub async fn find_detail_by_id(_id: &ObjectId) -> Result<Option<UserResponse>, String> {
+        let db: Database = get_db();
+        let collection: Collection<User> = db.collection::<User>("users");
+
+        let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
+
+        pipeline.push(doc! {
+            "$match": {
+                "$expr": {
+                    "$eq": ["$_id", to_bson::<ObjectId>(&_id).unwrap()]
+                }
+            }
+        });
+        pipeline.push(doc! {
+            "$lookup": {
+                "from": "roles",
+                "as": "role",
+                "let": {
+                    "role_id": "$role_id"
+                },
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$in": ["$_id", "$$role_id"]
+                            }
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": { "$toString": "$_id" },
+                            "name": "$name",
+                            "permission": "$permission",
+                        }
+                    }
+                ]
+            }
+        });
+        pipeline.push(doc! {
+            "$project": {
+                "_id": {
+                    "$toString": "$_id"
+                },
+                "name": "$name",
+                "email": "$email",
+                "role": "$role",
+                "image": "$image",
+            }
+        });
+
+        if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
+            if let Some(Ok(doc)) = cursor.next().await {
+                let user = from_document::<UserResponse>(doc).unwrap();
+                Ok(Some(user))
+            } else {
+                Err("USER_NOT_FOUND".to_string())
+            }
+        } else {
+            Err("USER_NOT_FOUND".to_string())
+        }
+    }
 }
 
 impl UserCredential {
-    pub async fn authenticate(&self) -> Result<(String, String, User), String> {
+    pub async fn authenticate(&self) -> Result<(String, String, UserResponse), String> {
         let user = User::find_by_email(&self.email)
             .await?
             .ok_or_else(|| "INVALID_COMBINATION".to_string())?;
@@ -265,12 +326,18 @@ impl UserCredential {
                         .unwrap(),
                 ),
             ) {
-                (Ok(atk), Ok(rtk)) => Ok((atk, rtk, user)),
+                (Ok(atk), Ok(rtk)) => {
+                    let user = User::find_detail_by_id(&user._id.unwrap())
+                        .await
+                        .map_err(|_| "USER_NOT_FOUND".to_string())?
+                        .ok_or("USER_NOT_FOUND")?;
+                    Ok((atk, rtk, user))
+                }
                 _ => Err("GENERATING_FAILED".to_string()),
             }
         }
     }
-    pub async fn refresh(token: &str) -> Result<(String, String, User), String> {
+    pub async fn refresh(token: &str) -> Result<(String, String, UserResponse), String> {
         let validation: Validation = Validation::new(Algorithm::RS256);
         let data: TokenData<UserClaim>;
 
@@ -317,7 +384,13 @@ impl UserCredential {
                         .unwrap(),
                 ),
             ) {
-                (Ok(atk), Ok(rtk)) => Ok((atk, rtk, user)),
+                (Ok(atk), Ok(rtk)) => {
+                    let user = User::find_detail_by_id(&user._id.unwrap())
+                        .await
+                        .map_err(|_| "USER_NOT_FOUND".to_string())?
+                        .ok_or("USER_NOT_FOUND")?;
+                    Ok((atk, rtk, user))
+                }
                 _ => Err("GENERATING_FAILED".to_string()),
             }
         }
