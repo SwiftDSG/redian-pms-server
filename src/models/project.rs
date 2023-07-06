@@ -79,35 +79,16 @@ pub struct ProjectArea {
     pub _id: ObjectId,
     pub name: String,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ProjectAreaRequest {
-    pub name: String,
-}
-#[derive(Debug)]
-pub struct ProjectQuery {
-    pub _id: Option<ObjectId>,
-    pub limit: Option<usize>,
-}
-#[derive(Debug, Deserialize)]
-pub struct ProjectRequest {
-    pub customer_id: ObjectId,
-    pub user_id: Option<ObjectId>,
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectResponse {
+    pub _id: String,
+    pub customer: ProjectCustomerResponse,
     pub name: String,
     pub code: String,
-    pub period: ProjectPeriodRequest,
-    pub leave: Option<Vec<DateTime>>,
-}
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ProjectMemberRequest {
-    pub _id: Option<ObjectId>,
-    pub name: Option<String>,
-    pub kind: ProjectMemberKind,
-    pub role_id: Vec<ObjectId>,
-}
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ProjectPeriodRequest {
-    pub start: i64,
-    pub end: i64,
+    pub period: ProjectPeriodResponse,
+    pub status: Vec<ProjectStatusResponse>,
+    pub area: Option<Vec<ProjectArea>>,
+    pub leave: Option<Vec<String>>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectMinResponse {
@@ -129,17 +110,6 @@ pub struct ProjectProgressResponse {
 pub struct ProjectProgressGraphResponse {
     pub x: i64,
     pub y: Vec<f64>,
-}
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ProjectResponse {
-    pub _id: String,
-    pub customer: ProjectCustomerResponse,
-    pub name: String,
-    pub code: String,
-    pub period: ProjectPeriodResponse,
-    pub status: Vec<ProjectStatus>,
-    pub area: Option<Vec<ProjectArea>>,
-    pub leave: Option<Vec<DateTime>>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectCustomerResponse {
@@ -176,6 +146,42 @@ pub struct ProjectReportResponse {
     pub kind: ProjectReportKind,
     pub progress: Option<ProjectProgressReportMinResponse>,
     pub incident: Option<ProjectIncidentReportResponse>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectStatusResponse {
+    pub kind: ProjectStatusKind,
+    pub time: String,
+    pub message: Option<String>,
+}
+#[derive(Debug, Deserialize)]
+pub struct ProjectRequest {
+    pub customer_id: ObjectId,
+    pub user_id: Option<ObjectId>,
+    pub name: String,
+    pub code: String,
+    pub period: ProjectPeriodRequest,
+    pub leave: Option<Vec<DateTime>>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectAreaRequest {
+    pub name: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectMemberRequest {
+    pub _id: Option<ObjectId>,
+    pub name: Option<String>,
+    pub kind: ProjectMemberKind,
+    pub role_id: Vec<ObjectId>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectPeriodRequest {
+    pub start: i64,
+    pub end: i64,
+}
+#[derive(Debug)]
+pub struct ProjectQuery {
+    pub _id: Option<ObjectId>,
+    pub limit: Option<usize>,
 }
 
 impl Project {
@@ -618,7 +624,16 @@ impl Project {
                         "start": { "$toString": "$period.start" },
                         "end": { "$toString": "$period.end" },
                     },
-                    "status": "$status",
+                    "status": {
+                        "$map": {
+                            "input": "$status",
+                            "in": {
+                                "kind": "$$this.kind",
+                                "message": "$$this.message",
+                                "time": { "$toString": "$$this.time" }
+                            }
+                        }
+                    },
                     "area": "$area",
                     "leave": "$leave",
                 }
