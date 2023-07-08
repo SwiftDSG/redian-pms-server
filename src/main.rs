@@ -59,7 +59,6 @@ async fn main() -> io::Result<()> {
     HttpServer::new(move || {
         let cors = Cors::default()
             .allowed_origin(&std::env::var("CLIENT_URL").unwrap())
-            // .allowed_origin("https://redian.id")
             .allow_any_header()
             .allow_any_method()
             .supports_credentials();
