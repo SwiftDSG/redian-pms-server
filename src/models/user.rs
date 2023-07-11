@@ -45,7 +45,7 @@ pub struct User {
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserImage {
-    pub _id: String,
+    pub _id: ObjectId,
     pub extension: String,
 }
 #[derive(Debug, Deserialize)]

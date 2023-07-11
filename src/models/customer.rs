@@ -1,4 +1,5 @@
 use crate::database::get_db;
+use actix_multipart::form::{tempfile::TempFile, MultipartForm};
 use futures::stream::StreamExt;
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_bson},
@@ -11,8 +12,10 @@ pub struct Customer {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _id: Option<ObjectId>,
     pub name: String,
+    pub field: String,
     pub contact: CustomerContact,
     pub person: Vec<CustomerPerson>,
+    pub image: Option<CustomerImage>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CustomerContact {
@@ -29,6 +32,11 @@ pub struct CustomerPerson {
     pub email: Option<String>,
     pub role: String,
 }
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CustomerImage {
+    pub _id: ObjectId,
+    pub extension: String,
+}
 #[derive(Debug)]
 pub struct CustomerQuery {
     pub _id: Option<ObjectId>,
@@ -38,15 +46,28 @@ pub struct CustomerQuery {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CustomerRequest {
     pub name: String,
+    pub field: String,
     pub contact: CustomerContact,
     pub person: Vec<CustomerPerson>,
+    pub image: Option<CustomerImageRequest>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CustomerImageRequest {
+    pub extension: String,
+}
+#[derive(Debug, MultipartForm)]
+pub struct CustomerImageMultipartRequest {
+    #[multipart(rename = "file")]
+    pub file: TempFile,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CustomerResponse {
     pub _id: String,
     pub name: String,
+    pub field: String,
     pub contact: CustomerContact,
     pub person: Vec<CustomerPersonResponse>,
+    pub image: Option<CustomerImageResponse>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CustomerPersonResponse {
@@ -56,6 +77,11 @@ pub struct CustomerPersonResponse {
     pub phone: Option<String>,
     pub email: Option<String>,
     pub role: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CustomerImageResponse {
+    pub _id: String,
+    pub extension: String,
 }
 
 impl Customer {
@@ -74,6 +100,20 @@ impl Customer {
             .await
             .map_err(|_| "INSERTING_FAILED".to_string())
             .map(|result| result.inserted_id.as_object_id().unwrap())
+    }
+    pub async fn update(&self) -> Result<ObjectId, String> {
+        let db: Database = get_db();
+        let collection: Collection<Customer> = db.collection::<Customer>("customers");
+
+        collection
+            .update_one(
+                doc! { "_id": self._id.unwrap() },
+                doc! { "$set": to_bson::<Customer>(self).unwrap()},
+                None,
+            )
+            .await
+            .map_err(|_| "UPDATE_FAILED".to_string())
+            .map(|_| self._id.unwrap())
     }
     pub async fn find_many(query: &CustomerQuery) -> Result<Option<Vec<CustomerResponse>>, String> {
         let db: Database = get_db();
@@ -94,6 +134,7 @@ impl Customer {
                 "$toString": "$_id"
             },
             "name" : "$name",
+            "field" : "$field",
             "contact" : "$contact",
             "person" : {
                 "$map": {
@@ -110,6 +151,18 @@ impl Customer {
                     }
                 }
             },
+            "image": {
+                "$cond": [
+                  "$image",
+                  {
+                    "_id": {
+                      "$toString": "$image._id"
+                    },
+                    "extension": "$image.extension"
+                  },
+                  to_bson::<Option<CustomerImageResponse>>(&None).unwrap()
+                ]
+              },
           }
         });
 

@@ -1,7 +1,17 @@
+use std::{
+    fs::{create_dir_all, remove_dir_all, rename},
+    path::PathBuf,
+};
+
+use actix_multipart::form::MultipartForm;
 use actix_web::{delete, get, post, put, web, HttpMessage, HttpRequest, HttpResponse};
+use mime_guess::get_mime_extensions_str;
+use mongodb::bson::oid::ObjectId;
 
 use crate::models::{
-    customer::{Customer, CustomerQuery, CustomerRequest},
+    customer::{
+        Customer, CustomerImage, CustomerImageMultipartRequest, CustomerQuery, CustomerRequest,
+    },
     role::{Role, RolePermission},
     user::UserAuthentication,
 };
@@ -52,9 +62,17 @@ pub async fn create_customer(
     let mut customer: Customer = Customer {
         _id: None,
         name: payload.name,
+        field: payload.field,
         contact: payload.contact,
         person: payload.person,
+        image: None,
     };
+    if let Some(image) = payload.image {
+        customer.image = Some(CustomerImage {
+            _id: ObjectId::new(),
+            extension: image.extension,
+        });
+    }
     match customer.save().await {
         Ok(id) => HttpResponse::Created().body(id.to_string()),
         Err(error) => HttpResponse::InternalServerError().body(error),
@@ -63,7 +81,7 @@ pub async fn create_customer(
 #[put("/customers/{customer_id}")]
 pub async fn update_customer(
     customer_id: web::Path<String>,
-    payload: web::Json<Customer>,
+    payload: web::Json<CustomerRequest>,
     req: HttpRequest,
 ) -> HttpResponse {
     let issuer_role = match req.extensions().get::<UserAuthentication>() {
@@ -81,18 +99,111 @@ pub async fn update_customer(
         _ => return HttpResponse::BadRequest().body("INVALID_ID"),
     };
 
-    if let Ok(Some(_)) = Customer::find_by_id(&customer_id).await {
-        let payload: Customer = payload.into_inner();
-        let mut customer: Customer = Customer {
+    if let Ok(Some(customer)) = Customer::find_by_id(&customer_id).await {
+        let payload = payload.into_inner();
+
+        if let Some(_) = &customer.image {
+            let old_path = format!("./files/customers/{customer_id}",);
+            remove_dir_all(old_path).expect("CUSTOMER_IMAGE_DELETION_FAILED");
+        }
+
+        let mut customer = Customer {
             _id: Some(customer_id),
             name: payload.name,
+            field: payload.field,
             contact: payload.contact,
             person: payload.person,
+            image: None,
         };
+
+        if let Some(image) = payload.image {
+            customer.image = Some(CustomerImage {
+                _id: ObjectId::new(),
+                extension: image.extension,
+            });
+        }
+
         return match customer.update_customer().await {
             Ok(customer_id) => HttpResponse::Ok().body(customer_id.to_string()),
             Err(error) => HttpResponse::InternalServerError().body(error),
         };
+    } else {
+        HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND")
+    }
+}
+#[put("/customers/{customer_id}/image")]
+pub async fn update_customer_image(
+    customer_id: web::Path<String>,
+    form: MultipartForm<CustomerImageMultipartRequest>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let issuer_role = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer.role_id.clone(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED"),
+    };
+    if issuer_role.is_empty()
+        || !Role::validate(&issuer_role, &RolePermission::UpdateCustomer).await
+    {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED");
+    }
+
+    let customer_id = match customer_id.parse() {
+        Ok(customer_id) => customer_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID"),
+    };
+
+    if let Ok(Some(mut customer)) = Customer::find_by_id(&customer_id).await {
+        let image = match &customer.image {
+            Some(image) => image,
+            None => return HttpResponse::BadRequest().body("CUSTOMER_IMAGE_NOT_FOUND"),
+        };
+
+        let save_dir = format!("./files/customers/{}/", customer_id);
+
+        if create_dir_all(&save_dir).is_err() {
+            return HttpResponse::InternalServerError()
+                .body("DIRECTORY_CREATION_FAILED".to_string());
+        }
+
+        if let Some(ext) = get_mime_extensions_str(&image.extension) {
+            let ext = *ext.first().unwrap();
+            let file_path_temp = form.file.file.path();
+            let file_path =
+                PathBuf::from(save_dir.to_owned() + &image._id.to_string() + "." + &ext);
+            if rename(file_path_temp, &file_path).is_ok() {
+                customer.image = Some(CustomerImage {
+                    _id: image._id,
+                    extension: ext.to_string(),
+                });
+
+                match customer.update().await {
+                    Ok(customer_id) => HttpResponse::Ok().body(customer_id.to_string()),
+                    Err(error) => {
+                        customer.image = None;
+                        customer
+                            .update()
+                            .await
+                            .expect("CUSTOMER_IMAGE_DELETION_FAILED");
+                        HttpResponse::BadRequest().body(error.to_string())
+                    }
+                }
+            } else {
+                customer.image = None;
+                remove_dir_all(file_path).expect("CUSTOMER_IMAGE_DELETION_FAILED");
+                customer
+                    .update()
+                    .await
+                    .expect("CUSTOMER_IMAGE_DELETION_FAILED");
+                HttpResponse::InternalServerError().body("CUSTOMER_IMAGE_RENAME_FAILED".to_string())
+            }
+        } else {
+            customer.image = None;
+            customer
+                .update()
+                .await
+                .expect("CUSTOMER_IMAGE_DELETION_FAILED");
+            HttpResponse::InternalServerError().body("CUSTOMER_IMAGE_INVALID_MIME".to_string())
+        }
     } else {
         HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND")
     }

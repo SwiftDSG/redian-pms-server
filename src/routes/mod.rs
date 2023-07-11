@@ -1,4 +1,5 @@
 use actix_web::{get, web, HttpResponse};
+use mime_guess::from_path;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -6,6 +7,9 @@ use std::fs;
 #[serde(rename_all = "snake_case")]
 pub enum FileKind {
     ProjectDocumentation,
+    CompanyImage,
+    CustomerImage,
+    UserImage,
 }
 
 #[derive(Deserialize)]
@@ -14,6 +18,7 @@ pub struct FileQueryParams {
     pub name: String,
 }
 
+pub mod company;
 pub mod customer;
 pub mod project;
 pub mod role;
@@ -22,13 +27,14 @@ pub mod user;
 #[get("/files")]
 pub async fn get_file(query: web::Query<FileQueryParams>) -> HttpResponse {
     let path = match query.kind {
-        FileKind::ProjectDocumentation => format!(
-            "./files/reports/documentation/64a550fc690938011be0b324/{}",
-            query.name
-        ),
+        FileKind::ProjectDocumentation => format!("./files/reports/documentation/{}", query.name),
+        FileKind::CompanyImage => format!("./files/companies/{}", query.name),
+        FileKind::CustomerImage => format!("./files/customers/{}", query.name),
+        FileKind::UserImage => format!("./files/users/{}", query.name),
     };
-    if let Ok(file) = fs::read(path) {
-        HttpResponse::Ok().content_type("image/png").body(file)
+    if let Ok(file) = fs::read(path.clone()) {
+        let mime = from_path(path).first_or_octet_stream();
+        HttpResponse::Ok().content_type(mime).body(file)
     } else {
         HttpResponse::NotFound().body("CONTENT_NOT_FOUND")
     }

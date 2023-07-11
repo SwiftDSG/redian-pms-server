@@ -47,9 +47,9 @@ pub struct ProjectProgressReportPlan {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectProgressReportDocumentation {
-    pub _id: Option<ObjectId>,
+    pub _id: ObjectId,
     pub description: Option<String>,
-    pub extension: Option<String>,
+    pub extension: String,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectProgressReportDocumentationRequest {
@@ -163,12 +163,6 @@ impl ProjectProgressReport {
                 || (start_time[0] * 60 + start_time[1]) >= (end_time[0] * 60 + end_time[1])
             {
                 return Err("PROJECT_REPORT_TIME_INVALID".to_string());
-            }
-        }
-
-        if let Some(documentation) = self.documentation.as_mut() {
-            for i in documentation {
-                i._id = Some(ObjectId::new());
             }
         }
 

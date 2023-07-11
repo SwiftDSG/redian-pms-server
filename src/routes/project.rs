@@ -660,8 +660,8 @@ pub async fn create_project_report(
             .iter()
             .map(|a| ProjectProgressReportDocumentation {
                 description: a.description.clone(),
-                extension: Some(a.extension.clone()),
-                _id: Some(ObjectId::new()),
+                extension: a.extension.clone(),
+                _id: ObjectId::new(),
             })
             .collect();
         project_report.documentation = Some(docs);
@@ -918,38 +918,31 @@ pub async fn update_project_report(
 
     for (i, file) in form.files.iter().enumerate() {
         if let Some(mut image) = documentation.get_mut(i) {
-            if let Some(_id) = image._id {
-                let mut ext: String = String::new();
-                if let Some(file_name) = &file.file_name {
-                    if let Some(name) = Path::new(file_name).extension().and_then(OsStr::to_str) {
-                        ext = name.to_string();
-                    }
-                } else {
-                    ProjectProgressReport::delete_by_id(&report_id)
-                        .await
-                        .expect("PROJECT_REPORT_DELETION_FAILED");
-                    return HttpResponse::BadRequest()
-                        .body("PROJECT_REPORT_DOCUMENTATION_ONLY_ACCEPTS_IMAGE".to_string());
+            let mut ext = String::new();
+            if let Some(file_name) = &file.file_name {
+                if let Some(name) = Path::new(file_name).extension().and_then(OsStr::to_str) {
+                    ext = name.to_string();
                 }
-                let file_path_temp = file.file.path();
-                let file_path = PathBuf::from(save_dir.to_owned() + &_id.to_string() + "." + &ext);
-                if rename(file_path_temp, &file_path).is_err() {
-                    if remove_dir_all(file_path).is_ok()
-                        && (ProjectProgressReport::delete_by_id(&report_id).await).is_err()
-                    {
-                        return HttpResponse::InternalServerError()
-                            .body("PROJECT_REPORT_DELETION_FAILED".to_string());
-                    }
-                    break;
-                }
-                image.extension = Some(ext.to_string());
             } else {
                 ProjectProgressReport::delete_by_id(&report_id)
                     .await
                     .expect("PROJECT_REPORT_DELETION_FAILED");
-                return HttpResponse::InternalServerError()
-                    .body("PROJECT_REPORT_DOCUMENTATION_INVALID_LENGTH".to_string());
+                return HttpResponse::BadRequest()
+                    .body("PROJECT_REPORT_DOCUMENTATION_ONLY_ACCEPTS_IMAGE".to_string());
             }
+            let file_path_temp = file.file.path();
+            let file_path =
+                PathBuf::from(save_dir.to_owned() + &image._id.to_string() + "." + &ext);
+            if rename(file_path_temp, &file_path).is_err() {
+                if remove_dir_all(file_path).is_ok()
+                    && (ProjectProgressReport::delete_by_id(&report_id).await).is_err()
+                {
+                    return HttpResponse::InternalServerError()
+                        .body("PROJECT_REPORT_DELETION_FAILED".to_string());
+                }
+                break;
+            }
+            image.extension = ext.to_string();
         } else {
             ProjectProgressReport::delete_by_id(&report_id)
                 .await

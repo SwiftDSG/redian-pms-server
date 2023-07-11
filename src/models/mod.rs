@@ -1,3 +1,4 @@
+pub mod company;
 pub mod customer;
 pub mod project;
 pub mod project_incident_report;
