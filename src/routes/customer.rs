@@ -102,7 +102,7 @@ pub async fn update_customer(
     if let Ok(Some(customer)) = Customer::find_by_id(&customer_id).await {
         let payload = payload.into_inner();
 
-        if let Some(_) = &customer.image {
+        if customer.image.is_some() {
             let old_path = format!("./files/customers/{customer_id}",);
             remove_dir_all(old_path).expect("CUSTOMER_IMAGE_DELETION_FAILED");
         }
@@ -123,7 +123,7 @@ pub async fn update_customer(
             });
         }
 
-        return match customer.update_customer().await {
+        return match customer.update().await {
             Ok(customer_id) => HttpResponse::Ok().body(customer_id.to_string()),
             Err(error) => HttpResponse::InternalServerError().body(error),
         };
@@ -168,8 +168,7 @@ pub async fn update_customer_image(
         if let Some(ext) = get_mime_extensions_str(&image.extension) {
             let ext = *ext.first().unwrap();
             let file_path_temp = form.file.file.path();
-            let file_path =
-                PathBuf::from(save_dir.to_owned() + &image._id.to_string() + "." + &ext);
+            let file_path = PathBuf::from(save_dir.to_owned() + &image._id.to_string() + "." + ext);
             if rename(file_path_temp, &file_path).is_ok() {
                 customer.image = Some(CustomerImage {
                     _id: image._id,
@@ -225,8 +224,12 @@ pub async fn delete_customer(customer_id: web::Path<String>, req: HttpRequest) -
         _ => return HttpResponse::BadRequest().body("INVALID_ID"),
     };
 
-    return match Customer::delete_customer(&customer_id).await {
-        Ok(count) => HttpResponse::Ok().body(format!("Deleted {count} customer")),
-        Err(error) => HttpResponse::InternalServerError().body(error),
-    };
+    if let Ok(Some(customer)) = Customer::find_by_id(&customer_id).await {
+        match customer.delete().await {
+            Ok(count) => HttpResponse::Ok().body(format!("Deleted {count} customer")),
+            Err(error) => HttpResponse::InternalServerError().body(error),
+        }
+    } else {
+        HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND")
+    }
 }

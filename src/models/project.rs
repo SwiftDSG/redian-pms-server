@@ -42,6 +42,23 @@ pub enum ProjectStatusKind {
     Finished,
     Cancelled,
 }
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectQueryStatusKind {
+    Finished,
+    Cancelled,
+    Paused,
+    Running,
+    Ahead,
+    Behind,
+}
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectQuerySortKind {
+    Latest,
+    Oldest,
+    Alphabetical,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Project {
@@ -55,6 +72,7 @@ pub struct Project {
     pub area: Option<Vec<ProjectArea>>,
     pub member: Option<Vec<ProjectMember>>,
     pub leave: Option<Vec<DateTime>>,
+    pub create_date: DateTime,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectStatus {
@@ -79,6 +97,7 @@ pub struct ProjectArea {
     pub _id: ObjectId,
     pub name: String,
 }
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectResponse {
     pub _id: String,
@@ -153,6 +172,7 @@ pub struct ProjectStatusResponse {
     pub time: String,
     pub message: Option<String>,
 }
+
 #[derive(Debug, Deserialize)]
 pub struct ProjectRequest {
     pub customer_id: ObjectId,
@@ -180,8 +200,11 @@ pub struct ProjectPeriodRequest {
 }
 #[derive(Debug)]
 pub struct ProjectQuery {
-    pub _id: Option<ObjectId>,
+    pub status: Option<ProjectQueryStatusKind>,
+    pub sort: Option<ProjectQuerySortKind>,
+    pub text: Option<String>,
     pub limit: Option<usize>,
+    pub skip: Option<usize>,
 }
 
 impl Project {
@@ -229,7 +252,7 @@ impl Project {
                     if let Some(_id) = &i._id {
                         if (User::find_by_id(_id).await).is_ok() {
                             member.push(ProjectMember {
-                                _id: _id.clone(),
+                                _id: *_id,
                                 name: None,
                                 kind: i.kind.clone(),
                                 role_id: i.role_id.clone(),
@@ -434,19 +457,103 @@ impl Project {
 
         Ok(progress)
     }
-    pub async fn find_many(query: &ProjectQuery) -> Result<Vec<ProjectMinResponse>, String> {
+    pub async fn find_many(
+        query: &ProjectQuery,
+    ) -> Result<Option<Vec<ProjectMinResponse>>, String> {
         let db: Database = get_db();
         let collection: Collection<Project> = db.collection::<Project>("projects");
 
-        let mut pipeline: Vec<mongodb::bson::Document> = Vec::new();
-        let mut projects: Vec<ProjectMinResponse> = Vec::new();
+        let mut pipeline = Vec::<mongodb::bson::Document>::new();
+        let mut queries = Vec::<mongodb::bson::Document>::new();
+        let mut projects = Vec::<ProjectMinResponse>::new();
 
-        if let Some(limit) = query.limit {
-            pipeline.push(doc! {
-                "$limit": to_bson::<usize>(&limit).unwrap()
-            })
+        if let Some(status) = &query.status {
+            if status == &ProjectQueryStatusKind::Paused {
+                queries.push(doc! {
+                    "$or": [
+                        {
+                            "$eq": [
+                                {
+                                    "$first": "$status.kind"
+                                },
+                                "pending"
+                            ]
+                        },
+                        {
+                            "$eq": [
+                                {
+                                    "$first": "$status.kind"
+                                },
+                                "paused"
+                            ]
+                        },
+                        {
+                            "$eq": [
+                                {
+                                    "$first": "$status.kind"
+                                },
+                                "breakdown"
+                            ]
+                        },
+                    ]
+                });
+            } else if status == &ProjectQueryStatusKind::Finished {
+                queries.push(doc! {
+                    "$eq": [
+                        {
+                            "$first": "$status.kind"
+                        },
+                        "finished"
+                    ]
+                });
+            } else if status == &ProjectQueryStatusKind::Cancelled {
+                queries.push(doc! {
+                    "$eq": [
+                        {
+                            "$first": "$status.kind"
+                        },
+                        "cancelled"
+                    ]
+                });
+            } else {
+                queries.push(doc! {
+                    "$eq": [
+                        {
+                            "$first": "$status.kind"
+                        },
+                        "running"
+                    ]
+                });
+            }
+        }
+        if let Some(text) = &query.text {
+            queries.push(doc! {
+                "$or": [
+                    {
+                        "$regexMatch": {
+                            "input": "$name",
+                            "options": "i",
+                            "regex": to_bson::<String>(text).unwrap()
+                        }
+                    },
+                    {
+                        "$regexMatch": {
+                            "input": "$code",
+                            "options": "i",
+                            "regex": to_bson::<String>(text).unwrap()
+                        }
+                    }
+                ]
+            });
         }
 
+        pipeline.push(doc! {
+            "$match": {
+                "$expr": {
+                    "$and": queries
+                }
+            }
+        });
         pipeline.push(doc! {
             "$lookup": {
                 "from": "customers",
@@ -515,6 +622,38 @@ impl Project {
             }
         });
 
+        if let Some(sort) = &query.sort {
+            if sort == &ProjectQuerySortKind::Alphabetical {
+                pipeline.push(doc! {
+                    "$sort": {
+                        "name": -1
+                    }
+                });
+            } else if sort == &ProjectQuerySortKind::Latest {
+                pipeline.push(doc! {
+                    "$sort": {
+                        "create_date": -1
+                    }
+                });
+            } else if sort == &ProjectQuerySortKind::Oldest {
+                pipeline.push(doc! {
+                    "$sort": {
+                        "create_date": 1
+                    }
+                });
+            }
+        }
+        if let Some(limit) = query.limit {
+            pipeline.push(doc! {
+                "$limit": to_bson::<usize>(&limit).unwrap()
+            });
+        }
+        if let Some(skip) = query.skip {
+            pipeline.push(doc! {
+                "$skip": to_bson::<usize>(&skip).unwrap()
+            });
+        }
+
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             while let Some(Ok(doc)) = cursor.next().await {
                 let mut project: ProjectMinResponse =
@@ -523,15 +662,32 @@ impl Project {
                     Self::calculate_progress(&project._id.parse::<ObjectId>().unwrap())
                         .await
                         .map_or_else(|_| None, Some);
-                projects.push(project);
+
+                if let Some(progress) = &project.progress {
+                    if let Some(status) = &query.status {
+                        if status == &ProjectQueryStatusKind::Ahead {
+                            if progress.actual >= progress.plan {
+                                projects.push(project);
+                            }
+                        } else if status == &ProjectQueryStatusKind::Behind {
+                            if progress.actual < progress.plan {
+                                projects.push(project);
+                            }
+                        } else {
+                            projects.push(project);
+                        }
+                    } else {
+                        projects.push(project);
+                    }
+                }
             }
             if !projects.is_empty() {
-                Ok(projects)
+                Ok(Some(projects))
             } else {
-                Err("PROJECT_NOT_FOUND".to_string())
+                Ok(None)
             }
         } else {
-            Err("PROJECT_NOT_FOUND".to_string())
+            Ok(None)
         }
     }
     pub async fn find_by_id(_id: &ObjectId) -> Result<Option<Project>, String> {

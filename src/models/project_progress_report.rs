@@ -683,11 +683,6 @@ impl ProjectProgressReport {
             dependencies = tasks;
         }
 
-        match collection.aggregate(pipeline.clone(), None).await {
-            Err(err) => println!("{:#?}", err),
-            _ => (),
-        };
-
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             if let Some(Ok(doc)) = cursor.next().await {
                 let mut report = from_document::<ProjectProgressReportResponse>(doc).unwrap();

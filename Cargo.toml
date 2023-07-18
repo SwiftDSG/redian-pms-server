@@ -1,12 +1,11 @@
 [package]
-name = "pms-server"
+name = "redian-pms-server"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-
 actix-cors = "0.6.4"
 actix-multipart = "0.6.0"
 actix-service = "2.0.2"

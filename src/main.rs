@@ -75,6 +75,8 @@ async fn main() -> io::Result<()> {
                     .service(routes::user::get_users)
                     .service(routes::user::get_user)
                     .service(routes::user::create_user)
+                    .service(routes::user::update_user)
+                    .service(routes::user::update_user_image)
                     .service(routes::user::login)
                     .service(routes::user::refresh)
                     .service(routes::role::get_roles)

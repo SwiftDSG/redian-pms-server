@@ -358,13 +358,13 @@ impl ProjectTask {
         let tasks = Self::find_many(&ProjectTaskQuery {
             _id: None,
             project_id: None,
-            task_id: Some(_id.clone()),
+            task_id: Some(*_id),
             area_id: None,
             limit: None,
             kind: None,
         })
         .await?
-        .map_or_else(|| Vec::<ProjectTask>::new(), |val| val);
+        .map_or_else(Vec::<ProjectTask>::new, |val| val);
 
         let mut deleted = match collection.delete_one(doc! { "_id": _id }, None).await {
             Ok(result) => result.deleted_count,
@@ -393,13 +393,13 @@ impl ProjectTask {
         let tasks = Self::find_many(&ProjectTaskQuery {
             _id: None,
             project_id: None,
-            task_id: Some(_id.clone()),
+            task_id: Some(*_id),
             area_id: None,
             limit: None,
             kind: None,
         })
         .await?
-        .map_or_else(|| Vec::<ProjectTask>::new(), |val| val);
+        .map_or_else(Vec::<ProjectTask>::new, |val| val);
 
         let mut deleted = 0;
 

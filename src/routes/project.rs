@@ -14,8 +14,8 @@ use serde::Deserialize;
 use crate::models::{
     project::{
         Project, ProjectAreaRequest, ProjectMemberKind, ProjectMemberRequest, ProjectPeriod,
-        ProjectProgressGraphResponse, ProjectQuery, ProjectRequest, ProjectStatus,
-        ProjectStatusKind,
+        ProjectProgressGraphResponse, ProjectQuery, ProjectQuerySortKind, ProjectQueryStatusKind,
+        ProjectRequest, ProjectStatus, ProjectStatusKind,
     },
     project_incident_report::{ProjectIncidentReport, ProjectIncidentReportRequest},
     project_progress_report::{
@@ -45,17 +45,29 @@ pub struct ProjectIncidentReportQueryParams {
 pub struct ProjectStatusQueryParams {
     pub status: ProjectStatusKind,
 }
+#[derive(Deserialize)]
+pub struct ProjectQueryParams {
+    pub status: Option<ProjectQueryStatusKind>,
+    pub sort: Option<ProjectQuerySortKind>,
+    pub text: Option<String>,
+    pub limit: Option<usize>,
+    pub skip: Option<usize>,
+}
 
 #[get("/projects")]
-pub async fn get_projects() -> HttpResponse {
-    let query: ProjectQuery = ProjectQuery {
-        _id: None,
-        limit: None,
-    };
-
-    match Project::find_many(&query).await {
-        Ok(projects) => HttpResponse::Ok().json(projects),
-        Err(error) => HttpResponse::BadRequest().body(error),
+pub async fn get_projects(query: web::Query<ProjectQueryParams>) -> HttpResponse {
+    match Project::find_many(&ProjectQuery {
+        status: query.status.clone(),
+        sort: query.sort.clone(),
+        text: query.text.clone(),
+        limit: query.limit,
+        skip: query.skip,
+    })
+    .await
+    {
+        Ok(Some(projects)) => HttpResponse::Ok().json(projects),
+        Ok(None) => HttpResponse::NotFound().body("PROJECT_NOT_FOUND"),
+        Err(error) => HttpResponse::InternalServerError().body(error),
     }
 }
 #[get("/projects/{project_id}")]
@@ -400,6 +412,7 @@ pub async fn create_project(payload: web::Json<ProjectRequest>, req: HttpRequest
         member: None,
         area: None,
         leave: payload.leave,
+        create_date: DateTime::from_millis(Utc::now().timestamp_millis()),
     };
 
     if let Some(_id) = payload.user_id {
@@ -551,9 +564,9 @@ pub async fn create_project_task_sub(
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
 
-    match ProjectTask::delete_many_by_task_id(&task_id).await {
-        _ => (),
-    };
+    if ProjectTask::delete_many_by_task_id(&task_id).await.is_err() {
+        ();
+    }
 
     if let Ok(Some(task)) = ProjectTask::find_by_id(&task_id).await {
         if let Ok(Some(project)) = Project::find_by_id(&task.project_id).await {
@@ -757,7 +770,7 @@ pub async fn update_project_status(
             Err(error) => HttpResponse::InternalServerError().body(error),
         }
     } else {
-        return HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string());
+        HttpResponse::NotFound().body("PROJECT_NOT_FOUND".to_string())
     }
 }
 #[put("/projects/{project_id}/tasks/{task_id}")] // FINISHED
@@ -1078,7 +1091,7 @@ pub async fn delete_project_area(
     }
 
     if let Ok(Some(mut project)) = Project::find_by_id(&project_id).await {
-        if let Ok(_) = ProjectTask::delete_many_by_area_id(&area_id).await {
+        if ProjectTask::delete_many_by_area_id(&area_id).await.is_ok() {
             match project.remove_area(&area_id).await {
                 Ok(_id) => HttpResponse::Ok().body(_id.to_string()),
                 Err(error) => HttpResponse::InternalServerError().body(error),

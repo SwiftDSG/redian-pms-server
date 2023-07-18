@@ -115,6 +115,16 @@ impl Customer {
             .map_err(|_| "UPDATE_FAILED".to_string())
             .map(|_| self._id.unwrap())
     }
+    pub async fn delete(&self) -> Result<u64, String> {
+        let db: Database = get_db();
+        let collection: Collection<Customer> = db.collection::<Customer>("customers");
+
+        collection
+            .delete_one(doc! { "_id": self._id.unwrap() }, None)
+            .await
+            .map_err(|_| "CUSTOMER_NOT_FOUND".to_string())
+            .map(|result| result.deleted_count)
+    }
     pub async fn find_many(query: &CustomerQuery) -> Result<Option<Vec<CustomerResponse>>, String> {
         let db: Database = get_db();
         let collection: Collection<Customer> = db.collection::<Customer>("customers");
@@ -153,16 +163,16 @@ impl Customer {
             },
             "image": {
                 "$cond": [
-                  "$image",
-                  {
-                    "_id": {
-                      "$toString": "$image._id"
+                    "$image",
+                    {
+                        "_id": {
+                            "$toString": "$image._id"
+                        },
+                        "extension": "$image.extension"
                     },
-                    "extension": "$image.extension"
-                  },
-                  to_bson::<Option<CustomerImageResponse>>(&None).unwrap()
+                    to_bson::<Option<CustomerImageResponse>>(&None).unwrap()
                 ]
-              },
+            },
           }
         });
 
@@ -188,29 +198,5 @@ impl Customer {
             .find_one(doc! { "_id": _id }, None)
             .await
             .map_err(|_| "CUSTOMER_NOT_FOUND".to_string())
-    }
-    pub async fn delete_customer(_id: &ObjectId) -> Result<u64, String> {
-        let db: Database = get_db();
-        let collection: Collection<Customer> = db.collection::<Customer>("customers");
-
-        collection
-            .delete_one(doc! { "_id": _id }, None)
-            .await
-            .map_err(|_| "CUSTOMER_NOT_FOUND".to_string())
-            .map(|result| result.deleted_count)
-    }
-    pub async fn update_customer(&mut self) -> Result<ObjectId, String> {
-        let db: Database = get_db();
-        let collection: Collection<Customer> = db.collection::<Customer>("customers");
-
-        collection
-            .update_one(
-                doc! { "_id": self._id.unwrap() },
-                doc! { "$set": to_bson::<Customer>(self).unwrap()},
-                None,
-            )
-            .await
-            .map_err(|_| "CUSTOMER_NOT_FOUND".to_string())
-            .map(|_| self._id.unwrap())
     }
 }

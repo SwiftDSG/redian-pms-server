@@ -1,4 +1,5 @@
 use crate::database::get_db;
+use actix_multipart::form::{tempfile::TempFile, MultipartForm};
 use actix_service::{self, Transform};
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse},
@@ -25,14 +26,6 @@ use super::role::RoleResponse;
 
 static mut KEYS: BTreeMap<String, String> = BTreeMap::new();
 
-#[derive(Debug, Serialize, Deserialize)]
-struct UserClaim {
-    aud: String,
-    exp: i64,
-    iss: String,
-    sub: String,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,7 +47,7 @@ pub struct UserCredential {
     pub password: String,
 }
 #[derive(Debug, Deserialize)]
-pub struct UserRefresh {
+pub struct UserRefreshRequest {
     pub rtk: String,
 }
 #[derive(Debug)]
@@ -70,20 +63,44 @@ pub struct UserRequest {
     pub name: String,
     pub email: String,
     pub password: String,
+    pub image: Option<UserImageRequest>,
 }
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UserImageRequest {
+    pub extension: String,
+}
+#[derive(Debug, MultipartForm)]
+pub struct UserImageMultipartRequest {
+    #[multipart(rename = "file")]
+    pub file: TempFile,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserResponse {
     pub _id: String,
     pub role: Vec<RoleResponse>,
     pub name: String,
     pub email: String,
-    pub image: Option<UserImage>,
+    pub image: Option<UserImageResponse>,
 }
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UserImageResponse {
+    pub _id: String,
+    pub extension: String,
+}
+
 #[derive(Debug)]
 pub struct UserAuthenticationData {
     pub _id: Option<ObjectId>,
     pub role_id: Vec<ObjectId>,
     pub token: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+struct UserClaim {
+    aud: String,
+    exp: i64,
+    iss: String,
+    sub: String,
 }
 pub struct UserAuthenticationMiddleware<S> {
     service: Rc<S>,
@@ -110,9 +127,17 @@ impl User {
             Err("HASHING_FAILED".to_string())
         }
     }
-    pub async fn update(&self) -> Result<ObjectId, String> {
+    pub async fn update(&mut self, update_hash: bool) -> Result<ObjectId, String> {
         let db: Database = get_db();
         let collection: Collection<User> = db.collection::<User>("users");
+
+        if update_hash {
+            if let Ok(hash) = bcrypt::hash(&self.password) {
+                self.password = hash;
+            } else {
+                return Err("HASHING_FAILED".to_string());
+            }
+        }
 
         collection
             .update_one(
@@ -189,7 +214,18 @@ impl User {
                 "name": "$name",
                 "email": "$email",
                 "role": "$role",
-                "image": "$image",
+                "image": {
+                    "$cond": [
+                        "$image",
+                        {
+                            "_id": {
+                                "$toString": "$image._id"
+                            },
+                            "extension": "$image.extension"
+                        },
+                        to_bson::<Option<UserImageResponse>>(&None).unwrap()
+                    ]
+                },
             }
         });
 
@@ -234,7 +270,7 @@ impl User {
         pipeline.push(doc! {
             "$match": {
                 "$expr": {
-                    "$eq": ["$_id", to_bson::<ObjectId>(&_id).unwrap()]
+                    "$eq": ["$_id", to_bson::<ObjectId>(_id).unwrap()]
                 }
             }
         });
@@ -271,7 +307,18 @@ impl User {
                 "name": "$name",
                 "email": "$email",
                 "role": "$role",
-                "image": "$image",
+                "image": {
+                    "$cond": [
+                        "$image",
+                        {
+                            "_id": {
+                                "$toString": "$image._id"
+                            },
+                            "extension": "$image.extension"
+                        },
+                        to_bson::<Option<UserImageResponse>>(&None).unwrap()
+                    ]
+                },
             }
         });
 

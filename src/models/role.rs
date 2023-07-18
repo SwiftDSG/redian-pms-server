@@ -157,7 +157,7 @@ impl Role {
         let db: Database = get_db();
         let collection: Collection<Role> = db.collection::<Role>("roles");
 
-        match db
+        if let Ok(mut cursor) = db
             .collection::<User>("users")
             .find(
                 doc! {
@@ -167,24 +167,21 @@ impl Role {
             )
             .await
         {
-            Ok(mut cursor) => {
-                while let Some(Ok(mut user)) = cursor.next().await {
-                    if let Some(index) = user.role_id.iter().position(|a| a == _id) {
-                        user.role_id.remove(index);
-                        if user.role_id.is_empty() {
-                            user.delete()
-                                .await
-                                .map_err(|_| "USER_DELETION_FAILED".to_string())?;
-                        } else {
-                            user.update()
-                                .await
-                                .map_err(|_| "ROLE_DELETION_FAILED".to_string())?;
-                        }
+            while let Some(Ok(mut user)) = cursor.next().await {
+                if let Some(index) = user.role_id.iter().position(|a| a == _id) {
+                    user.role_id.remove(index);
+                    if user.role_id.is_empty() {
+                        user.delete()
+                            .await
+                            .map_err(|_| "USER_DELETION_FAILED".to_string())?;
+                    } else {
+                        user.update(false)
+                            .await
+                            .map_err(|_| "ROLE_DELETION_FAILED".to_string())?;
                     }
                 }
             }
-            Err(_) => (),
-        };
+        }
 
         collection
             .delete_one(doc! { "_id": _id }, None)

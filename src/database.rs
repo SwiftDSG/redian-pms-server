@@ -7,25 +7,22 @@ pub async fn connect(uri: String) {
         .await
         .expect("Failed to connect to database");
 
-    match (
+    if let (Ok(username), Ok(password)) = (
         std::env::var("DATABASE_USERNAME"),
         std::env::var("DATABASE_PASSWORD"),
     ) {
-        (Ok(username), Ok(password)) => {
-            let credential = Credential::builder()
-                .username(username)
-                .password(password)
-                .source("admin".to_string())
-                .build();
+        let credential = Credential::builder()
+            .username(username)
+            .password(password)
+            .source("admin".to_string())
+            .build();
 
-            let options = mongodb::options::ClientOptions::builder()
-                .credential(credential)
-                .build();
+        let options = mongodb::options::ClientOptions::builder()
+            .credential(credential)
+            .build();
 
-            client = Client::with_options(options).expect("Failed to connect to database");
-        }
-        _ => (),
-    };
+        client = Client::with_options(options).expect("Failed to connect to database");
+    }
 
     unsafe {
         DB = Some(client.database("pms"));

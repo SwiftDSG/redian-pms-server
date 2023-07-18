@@ -1499,25 +1499,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ac9a59f73473f1b8d852421e59e64809f025994837ef743615c6d0c5b305160"
 
 [[package]]
-name = "pms-server"
-version = "0.1.0"
-dependencies = [
- "actix-cors",
- "actix-multipart",
- "actix-service",
- "actix-web",
- "async-recursion",
- "chrono",
- "futures",
- "jsonwebtoken",
- "mime_guess",
- "mongodb",
- "pwhash",
- "regex",
- "serde",
-]
-
-[[package]]
 name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1596,6 +1577,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "redian-pms-server"
+version = "0.1.0"
+dependencies = [
+ "actix-cors",
+ "actix-multipart",
+ "actix-service",
+ "actix-web",
+ "async-recursion",
+ "chrono",
+ "futures",
+ "jsonwebtoken",
+ "mime_guess",
+ "mongodb",
+ "pwhash",
+ "regex",
+ "serde",
 ]
 
 [[package]]

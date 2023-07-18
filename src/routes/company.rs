@@ -75,7 +75,7 @@ pub async fn update_company(
     if let Ok(Some(mut company)) = Company::find_by_id(&company_id).await {
         let payload = payload.into_inner();
 
-        if let Some(_) = &company.image {
+        if company.image.is_some() {
             let old_path = format!("./files/companies/{company_id}",);
             remove_dir_all(old_path).expect("COMPANY_IMAGE_DELETION_FAILED");
         }
@@ -137,8 +137,7 @@ pub async fn update_company_image(
         if let Some(ext) = get_mime_extensions_str(&image.extension) {
             let ext = *ext.first().unwrap();
             let file_path_temp = form.file.file.path();
-            let file_path =
-                PathBuf::from(save_dir.to_owned() + &image._id.to_string() + "." + &ext);
+            let file_path = PathBuf::from(save_dir.to_owned() + &image._id.to_string() + "." + ext);
             if rename(file_path_temp, &file_path).is_ok() {
                 company.image = Some(CompanyImage {
                     _id: image._id,
