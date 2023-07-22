@@ -201,7 +201,7 @@ impl ProjectTask {
             .await
             {
                 let total = task.iter().fold(0.0, |a, b| a + b.value);
-                if (100.0 - total + self.value).abs() <= 0.001 {
+                if (100.0 - (total + self.value)).abs() <= 0.0011 {
                     self.value = 100.0 - total;
                 }
             }
