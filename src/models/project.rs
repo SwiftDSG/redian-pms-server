@@ -134,6 +134,12 @@ pub struct ProjectProgressGraphResponse {
 pub struct ProjectCustomerResponse {
     pub _id: String,
     pub name: String,
+    pub image: Option<ProjectCustomerImageResponse>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectCustomerImageResponse {
+    pub _id: String,
+    pub extension: String,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectAreaResponse {
@@ -717,6 +723,44 @@ impl Project {
                     "let": {
                         "customer_id": "$customer_id"
                     },
+                    "as": "customer",
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {
+                                    "$eq": ["$_id", "$$customer_id"]
+                                }
+                            }
+                        },
+                        {
+                            "$project": {
+                                "_id": {
+                                    "$toString": "$_id"
+                                },
+                                "name": "$name",
+                                "image": {
+                                    "$cond": [
+                                    "$image",
+                                    {
+                                        "_id": {
+                                            "$toString": "$image._id"
+                                        },
+                                        "extension": "$image.extension"
+                                    },
+                                    to_bson::<Option<ProjectCustomerImageResponse>>(&None).unwrap()
+                                ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            doc! {
+                "$lookup": {
+                    "from": "customers",
+                    "let": {
+                        "customer_id": "$customer_id"
+                    },
                     "as": "customers",
                     "pipeline": [
                         {
@@ -769,7 +813,7 @@ impl Project {
                         "$toString": "$_id"
                     },
                     "customer": {
-                        "$first": "$customers"
+                        "$first": "$customer"
                     },
                     "user": {
                         "$first": "$users"

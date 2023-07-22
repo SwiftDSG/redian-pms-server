@@ -52,14 +52,14 @@ pub struct ProjectProgressReportDocumentation {
     pub extension: String,
 }
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ProjectProgressReportDocumentationRequest {
-    pub description: Option<String>,
-    pub extension: String,
-}
-#[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectProgressReportWeather {
     pub time: [usize; 2],
     pub kind: ProjectProgressReportWeatherKind,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectProgressReportDocumentationRequest {
+    pub description: Option<String>,
+    pub extension: String,
 }
 
 pub struct ProjectProgressReportQuery {

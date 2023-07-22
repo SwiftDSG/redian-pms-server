@@ -346,28 +346,11 @@ pub async fn get_project_reports(project_id: web::Path<String>) -> HttpResponse 
     }
 }
 #[get("/projects/{project_id}/reports/{report_id}")]
-pub async fn get_project_report(
-    _id: web::Path<(String, String)>,
-    req: HttpRequest,
-) -> HttpResponse {
-    let (project_id, report_id) = match (_id.0.parse(), _id.1.parse()) {
-        (Ok(project_id), Ok(task_id)) => (project_id, task_id),
+pub async fn get_project_report(_id: web::Path<(String, String)>) -> HttpResponse {
+    let report_id = match _id.1.parse() {
+        Ok(report_id) => report_id,
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
     };
-
-    let issuer_id = match req.extensions().get::<UserAuthentication>() {
-        Some(issuer) => issuer._id.unwrap(),
-        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
-    };
-    if !ProjectRole::validate(
-        &project_id,
-        &issuer_id,
-        &ProjectRolePermission::CreateReport,
-    )
-    .await
-    {
-        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
-    }
 
     match ProjectProgressReport::find_detail_by_id(&report_id).await {
         Ok(Some(report)) => HttpResponse::Ok().json(report),
