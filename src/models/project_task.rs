@@ -189,6 +189,22 @@ impl ProjectTask {
                 .await
                 .map_err(|_| "PROJECT_TASK_UPDATE_FAILED".to_string())?;
             self.area_id = parent_task.area_id;
+        } else {
+            if let Ok(Some(task)) = Self::find_many(&ProjectTaskQuery {
+                _id: None,
+                project_id: Some(self.project_id),
+                task_id: None,
+                area_id: None,
+                limit: None,
+                kind: None,
+            })
+            .await
+            {
+                let total = task.iter().fold(0.0, |a, b| a + b.value);
+                if (100.0 - total + self.value).abs() <= 0.001 {
+                    self.value = 100.0 - total;
+                }
+            }
         }
 
         if let Ok(Some(project)) = Project::find_by_id(&self.project_id).await {
