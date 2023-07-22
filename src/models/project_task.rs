@@ -84,6 +84,7 @@ pub struct ProjectTaskResponse {
 pub struct ProjectTaskMinResponse {
     pub _id: String,
     pub task_id: Option<ObjectId>,
+    pub area_id: String,
     pub user: Option<Vec<ProjectTaskUserResponse>>,
     pub task: Option<Vec<ProjectTaskTaskResponse>>,
     pub name: String,
@@ -711,6 +712,9 @@ impl ProjectTask {
                     "$toString": "$_id"
                 },
                 "task_id": "$task_id",
+                "area_id": {
+                    "$toString": "$area_id"
+                },
                 "user": "$user",
                 "task": "$task",
                 "name": "$name",
@@ -1018,7 +1022,9 @@ impl ProjectTask {
                                 "_id": {
                                     "$toString": "$_id"
                                 },
-                                "area_id": "$area_id",
+                                "area_id": {
+                                    "$toString": "$area_id"
+                                },
                                 "task_id": "$task_id",
                                 "user": {
                                     "$concatArrays": [
@@ -1112,7 +1118,12 @@ impl ProjectTask {
                                         "input": "$tasks",
                                         "as": "task",
                                         "cond": {
-                                            "$eq": ["$$this._id", "$$task.area_id"]
+                                            "$eq": [
+                                                {
+                                                    "$toString": "$$this._id"
+                                                },
+                                                "$$task.area_id"
+                                            ]
                                         }
                                     }
                                 }

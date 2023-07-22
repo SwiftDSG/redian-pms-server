@@ -106,7 +106,7 @@ pub struct ProjectResponse {
     pub code: String,
     pub period: ProjectPeriodResponse,
     pub status: Vec<ProjectStatusResponse>,
-    pub area: Option<Vec<ProjectArea>>,
+    pub area: Option<Vec<ProjectAreaResponse>>,
     pub leave: Option<Vec<String>>,
 }
 #[derive(Debug, Deserialize, Serialize)]
@@ -834,7 +834,17 @@ impl Project {
                             }
                         }
                     },
-                    "area": "$area",
+                    "area": {
+                        "$map": {
+                            "input": "$area",
+                            "in": {
+                                "_id": {
+                                    "$toString": "$$this._id"
+                                },
+                                "name": "$$this.name"
+                            }
+                        }
+                    },
                     "leave": "$leave",
                 }
             },

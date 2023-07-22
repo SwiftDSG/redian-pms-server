@@ -116,7 +116,7 @@ pub async fn get_project_tasks(
     })
     .await
     {
-        Ok(Some(project)) => HttpResponse::Ok().json(project),
+        Ok(Some(tasks)) => HttpResponse::Ok().json(tasks),
         Ok(None) => HttpResponse::Ok().json(Vec::<ProjectTaskMinResponse>::new()),
         Err(error) => HttpResponse::InternalServerError().body(error),
     }
