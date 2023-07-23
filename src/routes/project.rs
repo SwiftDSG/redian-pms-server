@@ -35,7 +35,8 @@ use crate::models::{
 
 #[derive(Deserialize, Clone)]
 pub struct ProjectTaskQueryParams {
-    status: Option<ProjectTaskStatusKind>,
+    pub area_id: Option<ObjectId>,
+    pub status: Option<ProjectTaskStatusKind>,
 }
 #[derive(Deserialize)]
 pub struct ProjectIncidentReportQueryParams {
@@ -52,6 +53,10 @@ pub struct ProjectQueryParams {
     pub text: Option<String>,
     pub limit: Option<usize>,
     pub skip: Option<usize>,
+}
+#[derive(Deserialize)]
+pub struct ProjectProgressQueryParams {
+    pub area_id: Option<ObjectId>,
 }
 
 #[get("/projects")]
@@ -108,7 +113,7 @@ pub async fn get_project_tasks(
 
     match ProjectTask::find_many_timeline(&ProjectTaskTimelineQuery {
         project_id,
-        area_id: None,
+        area_id: query.area_id.clone(),
         task_id: None,
         status: query.status.clone(),
         relative: false,
@@ -143,7 +148,10 @@ pub async fn get_project_task(_id: web::Path<(String, String)>, req: HttpRequest
     }
 }
 #[get("/projects/{project_id}/progress")]
-pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse {
+pub async fn get_project_progress(
+    project_id: web::Path<String>,
+    query: web::Query<ProjectProgressQueryParams>,
+) -> HttpResponse {
     let project_id: ObjectId = match project_id.parse() {
         Ok(project_id) => project_id,
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
@@ -157,7 +165,7 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
         _id: None,
         project_id: Some(project_id),
         task_id: None,
-        area_id: None,
+        area_id: query.area_id,
         limit: None,
         kind: Some(ProjectTaskQueryKind::Base),
     })
@@ -169,7 +177,7 @@ pub async fn get_project_progress(project_id: web::Path<String>) -> HttpResponse
         _id: None,
         project_id: Some(project_id),
         task_id: None,
-        area_id: None,
+        area_id: query.area_id,
         limit: None,
         kind: Some(ProjectTaskQueryKind::Dependency),
     })

@@ -825,6 +825,12 @@ impl ProjectTask {
                 }
             }
         });
+        pipeline.push(doc! {
+            "$sort": {
+                "period.start": 1,
+                "task_id": 1
+            }
+        });
 
         if let Ok(mut cursor) = collection.aggregate(pipeline, None).await {
             let mut tasks: Vec<ProjectTaskMinResponse> = Vec::<ProjectTaskMinResponse>::new();
