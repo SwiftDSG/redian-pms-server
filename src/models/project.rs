@@ -666,9 +666,15 @@ impl Project {
                     from_document::<ProjectMinResponse>(doc).unwrap();
 
                 if project.status.first().unwrap().kind == ProjectStatusKind::Pending {
-                    project.progress = 0.0;
+                    project.progress = Some(ProjectProgressResponse {
+                        plan: 0.0,
+                        actual: 0.0,
+                    });
                 } else if project.status.first().unwrap().kind == ProjectStatusKind::Finished {
-                    project.progress = 100.0;
+                    project.progress = Some(ProjectProgressResponse {
+                        plan: 100.0,
+                        actual: 100.0,
+                    });
                 } else {
                     project.progress =
                         Self::calculate_progress(&project._id.parse::<ObjectId>().unwrap())
