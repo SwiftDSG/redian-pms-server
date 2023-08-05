@@ -664,10 +664,17 @@ impl Project {
             while let Some(Ok(doc)) = cursor.next().await {
                 let mut project: ProjectMinResponse =
                     from_document::<ProjectMinResponse>(doc).unwrap();
-                project.progress =
-                    Self::calculate_progress(&project._id.parse::<ObjectId>().unwrap())
-                        .await
-                        .map_or_else(|_| None, Some);
+
+                if project.status.first().unwrap().kind == ProjectStatusKind::Pending {
+                    project.progress = 0.0;
+                } else if project.status.first().unwrap().kind == ProjectStatusKind::Finished {
+                    project.progress = 100.0;
+                } else {
+                    project.progress =
+                        Self::calculate_progress(&project._id.parse::<ObjectId>().unwrap())
+                            .await
+                            .map_or_else(|_| None, Some);
+                }
 
                 if let Some(progress) = &project.progress {
                     if let Some(status) = &query.status {
