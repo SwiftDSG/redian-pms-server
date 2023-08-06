@@ -230,86 +230,6 @@ impl Project {
             Err("CUSTOMER_NOT_FOUND".to_string())
         }
     }
-    pub async fn add_member(
-        &mut self,
-        members: &[ProjectMemberRequest],
-    ) -> Result<ObjectId, String> {
-        let db: Database = get_db();
-        let collection: Collection<Project> = db.collection::<Project>("projects");
-
-        let mut member: Vec<ProjectMember> = match &self.member {
-            Some(member) => Vec::<ProjectMember>::from_iter(member.clone()),
-            None => Vec::<ProjectMember>::new(),
-        };
-
-        for i in members.iter() {
-            match i.kind {
-                ProjectMemberKind::Support => {
-                    if i.name.is_some() {
-                        member.push(ProjectMember {
-                            _id: ObjectId::new(),
-                            name: i.name.clone(),
-                            kind: i.kind.clone(),
-                            role_id: i.role_id.clone(),
-                        });
-                    }
-                }
-                _ => {
-                    if let Some(_id) = &i._id {
-                        if (User::find_by_id(_id).await).is_ok() {
-                            member.push(ProjectMember {
-                                _id: *_id,
-                                name: None,
-                                kind: i.kind.clone(),
-                                role_id: i.role_id.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        self.member = Some(member);
-
-        collection
-            .update_one(
-                doc! { "_id": self._id.unwrap() },
-                doc! { "$set": to_bson::<Project>(self).unwrap()},
-                None,
-            )
-            .await
-            .map_err(|_| "UPDATE_FAILED".to_string())
-            .map(|_| self._id.unwrap())
-    }
-    pub async fn add_area(&mut self, areas: &[ProjectAreaRequest]) -> Result<ObjectId, String> {
-        let db: Database = get_db();
-        let collection: Collection<Project> = db.collection::<Project>("projects");
-
-        let mut area: Vec<ProjectArea> = match &self.area {
-            Some(area) => Vec::<ProjectArea>::from_iter(area.clone()),
-            None => Vec::<ProjectArea>::new(),
-        };
-
-        for i in areas.iter() {
-            let new_area = ProjectArea {
-                _id: ObjectId::new(),
-                name: i.name.clone(),
-            };
-            area.push(new_area);
-        }
-
-        self.area = Some(area);
-
-        collection
-            .update_one(
-                doc! { "_id": self._id.unwrap() },
-                doc! { "$set": to_bson::<Project>(self).unwrap()},
-                None,
-            )
-            .await
-            .map_err(|_| "UPDATE_FAILED".to_string())
-            .map(|_| self._id.unwrap())
-    }
     pub async fn calculate_progress(_id: &ObjectId) -> Result<ProjectProgressResponse, String> {
         let mut bases: Vec<ProjectTask> = Vec::new();
         let mut dependencies: Vec<ProjectTask> = Vec::new();
@@ -1889,6 +1809,102 @@ impl Project {
             .update_one(
                 doc! { "_id": self._id.unwrap() },
                 doc! { "$set": to_bson::<Self>(self).unwrap()},
+                None,
+            )
+            .await
+            .map_err(|_| "UPDATE_FAILED".to_string())
+            .map(|_| self._id.unwrap())
+    }
+    pub async fn add_member(
+        &mut self,
+        members: &[ProjectMemberRequest],
+    ) -> Result<ObjectId, String> {
+        let db: Database = get_db();
+        let collection: Collection<Project> = db.collection::<Project>("projects");
+
+        let mut member: Vec<ProjectMember> = match &self.member {
+            Some(member) => Vec::<ProjectMember>::from_iter(member.clone()),
+            None => Vec::<ProjectMember>::new(),
+        };
+
+        for i in members.iter() {
+            match i.kind {
+                ProjectMemberKind::Support => {
+                    if i.name.is_some() {
+                        member.push(ProjectMember {
+                            _id: ObjectId::new(),
+                            name: i.name.clone(),
+                            kind: i.kind.clone(),
+                            role_id: i.role_id.clone(),
+                        });
+                    }
+                }
+                _ => {
+                    if let Some(_id) = &i._id {
+                        if (User::find_by_id(_id).await).is_ok() {
+                            member.push(ProjectMember {
+                                _id: *_id,
+                                name: None,
+                                kind: i.kind.clone(),
+                                role_id: i.role_id.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        self.member = Some(member);
+
+        collection
+            .update_one(
+                doc! { "_id": self._id.unwrap() },
+                doc! { "$set": to_bson::<Project>(self).unwrap()},
+                None,
+            )
+            .await
+            .map_err(|_| "UPDATE_FAILED".to_string())
+            .map(|_| self._id.unwrap())
+    }
+    pub async fn add_area(&mut self, areas: &[ProjectAreaRequest]) -> Result<ObjectId, String> {
+        let db: Database = get_db();
+        let collection: Collection<Project> = db.collection::<Project>("projects");
+
+        let mut area: Vec<ProjectArea> = match &self.area {
+            Some(area) => Vec::<ProjectArea>::from_iter(area.clone()),
+            None => Vec::<ProjectArea>::new(),
+        };
+
+        for i in areas.iter() {
+            let new_area = ProjectArea {
+                _id: ObjectId::new(),
+                name: i.name.clone(),
+            };
+            area.push(new_area);
+        }
+
+        self.area = Some(area);
+
+        collection
+            .update_one(
+                doc! { "_id": self._id.unwrap() },
+                doc! { "$set": to_bson::<Project>(self).unwrap()},
+                None,
+            )
+            .await
+            .map_err(|_| "UPDATE_FAILED".to_string())
+            .map(|_| self._id.unwrap())
+    }
+    pub async fn replace_areas(&mut self, areas: Vec<ProjectArea>) -> Result<ObjectId, String> {
+        let db: Database = get_db();
+        let collection: Collection<Project> = db.collection::<Project>("projects");
+
+        self.area = Some(areas);
+
+        collection
+            .update_one(
+                doc! { "_id": self._id.unwrap() },
+                doc! { "$set": to_bson::<Project>(self).unwrap()},
                 None,
             )
             .await

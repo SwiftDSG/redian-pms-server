@@ -102,6 +102,7 @@ async fn main() -> io::Result<()> {
                     .service(routes::project::create_project)
                     .service(routes::project::create_project_role)
                     .service(routes::project::create_project_task)
+                    .service(routes::project::create_project_task_bulk)
                     .service(routes::project::create_project_task_sub)
                     .service(routes::project::create_project_report)
                     .service(routes::project::create_project_incident)

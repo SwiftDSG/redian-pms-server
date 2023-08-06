@@ -163,7 +163,7 @@ pub async fn update_user(
             image: None,
         };
 
-        if payload.password != String::from("*") {
+        if payload.password != *"*" {
             update_hash = true;
             user.password = payload.password;
         }

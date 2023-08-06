@@ -1,5 +1,6 @@
 use crate::database::get_db;
 
+use actix_multipart::form::{tempfile::TempFile, MultipartForm};
 use async_recursion::async_recursion;
 use chrono::Utc;
 use futures::stream::StreamExt;
@@ -156,12 +157,10 @@ pub struct ProjectTaskPeriodRequest {
     pub start: i64,
     pub end: i64,
 }
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ProjectTaskDependency {
-    pub _id: ObjectId,
-    pub task_id: Option<ObjectId>,
-    pub value: f64,
+#[derive(Debug, MultipartForm)]
+pub struct ProjectTaskMultipartRequest {
+    #[multipart(rename = "file")]
+    pub file: TempFile,
 }
 
 impl ProjectTask {
@@ -189,21 +188,19 @@ impl ProjectTask {
                 .await
                 .map_err(|_| "PROJECT_TASK_UPDATE_FAILED".to_string())?;
             self.area_id = parent_task.area_id;
-        } else {
-            if let Ok(Some(task)) = Self::find_many(&ProjectTaskQuery {
-                _id: None,
-                project_id: Some(self.project_id),
-                task_id: None,
-                area_id: None,
-                limit: None,
-                kind: None,
-            })
-            .await
-            {
-                let total = task.iter().fold(0.0, |a, b| a + b.value);
-                if (100.0 - (total + self.value)).abs() <= 0.0011 {
-                    self.value = 100.0 - total;
-                }
+        } else if let Ok(Some(task)) = Self::find_many(&ProjectTaskQuery {
+            _id: None,
+            project_id: Some(self.project_id),
+            task_id: None,
+            area_id: None,
+            limit: None,
+            kind: None,
+        })
+        .await
+        {
+            let total = task.iter().fold(0.0, |a, b| a + b.value);
+            if (100.0 - (total + self.value)).abs() <= 0.0011 {
+                self.value = 100.0 - total;
             }
         }
 
@@ -221,6 +218,22 @@ impl ProjectTask {
         } else {
             Err("PROJECT_NOT_FOUND".to_string())
         }
+    }
+    pub async fn save_bulk(tasks: Vec<Self>) -> Result<Vec<ObjectId>, String> {
+        let db: Database = get_db();
+        let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
+
+        collection
+            .insert_many(tasks, None)
+            .await
+            .map_err(|_| "INSERTING_FAILED".to_string())
+            .map(|result| {
+                let mut task_id = Vec::<ObjectId>::new();
+                for (_, _id) in result.inserted_ids.iter() {
+                    task_id.push(_id.as_object_id().unwrap());
+                }
+                task_id
+            })
     }
     pub async fn update(&self) -> Result<ObjectId, String> {
         let db: Database = get_db();
@@ -304,7 +317,7 @@ impl ProjectTask {
             if self.task_id.is_some() {
                 let tasks = Self::find_many(&ProjectTaskQuery {
                     _id: None,
-                    project_id: None,
+                    project_id: Some(self.project_id),
                     task_id: self.task_id,
                     area_id: None,
                     limit: None,
@@ -324,7 +337,7 @@ impl ProjectTask {
             } else {
                 let tasks = Self::find_many(&ProjectTaskQuery {
                     _id: None,
-                    project_id: None,
+                    project_id: Some(self.project_id),
                     task_id: None,
                     area_id: None,
                     limit: None,
@@ -335,7 +348,7 @@ impl ProjectTask {
 
                 if tasks.iter().all(|task| {
                     task._id == self._id
-                        || task.status.get(0).unwrap().kind == ProjectTaskStatusKind::Finished
+                        || task.status.first().unwrap().kind == ProjectTaskStatusKind::Finished
                 }) {
                     let mut project = Project::find_by_id(&self.project_id)
                         .await?
@@ -395,6 +408,16 @@ impl ProjectTask {
         }
 
         Ok(deleted)
+    }
+    pub async fn delete_many_by_project_id(_id: &ObjectId) -> Result<u64, String> {
+        let db: Database = get_db();
+        let collection: Collection<ProjectTask> = db.collection::<ProjectTask>("project-tasks");
+
+        collection
+            .delete_many(doc! { "project_id": _id }, None)
+            .await
+            .map_err(|_| "PROJECT_TASK_NOT_FOUND".to_string())
+            .map(|result| result.deleted_count)
     }
     pub async fn delete_many_by_area_id(_id: &ObjectId) -> Result<u64, String> {
         let db: Database = get_db();

@@ -1,21 +1,22 @@
 use std::{
+    cmp,
     ffi::OsStr,
-    fs::{create_dir_all, remove_dir_all, rename},
+    fs::{self, create_dir_all, remove_dir_all, rename},
     path::{Path, PathBuf},
     vec,
 };
 
 use actix_multipart::form::MultipartForm;
 use actix_web::{delete, get, post, put, web, HttpMessage, HttpRequest, HttpResponse};
-use chrono::{FixedOffset, Local, NaiveDateTime, Utc};
+use chrono::{FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use mongodb::bson::{doc, oid::ObjectId, to_bson, DateTime};
 use serde::Deserialize;
 
 use crate::models::{
     project::{
-        Project, ProjectAreaRequest, ProjectMemberKind, ProjectMemberRequest, ProjectPeriod,
-        ProjectProgressGraphResponse, ProjectQuery, ProjectQuerySortKind, ProjectQueryStatusKind,
-        ProjectRequest, ProjectStatus, ProjectStatusKind,
+        Project, ProjectArea, ProjectAreaRequest, ProjectMemberKind, ProjectMemberRequest,
+        ProjectPeriod, ProjectProgressGraphResponse, ProjectQuery, ProjectQuerySortKind,
+        ProjectQueryStatusKind, ProjectRequest, ProjectStatus, ProjectStatusKind,
     },
     project_incident_report::{ProjectIncidentReport, ProjectIncidentReportRequest},
     project_progress_report::{
@@ -25,9 +26,10 @@ use crate::models::{
     },
     project_role::{ProjectRole, ProjectRolePermission, ProjectRoleRequest},
     project_task::{
-        ProjectTask, ProjectTaskMinResponse, ProjectTaskPeriod, ProjectTaskPeriodRequest,
-        ProjectTaskQuery, ProjectTaskQueryKind, ProjectTaskRequest, ProjectTaskStatus,
-        ProjectTaskStatusKind, ProjectTaskStatusRequest, ProjectTaskTimelineQuery,
+        ProjectTask, ProjectTaskMinResponse, ProjectTaskMultipartRequest, ProjectTaskPeriod,
+        ProjectTaskPeriodRequest, ProjectTaskQuery, ProjectTaskQueryKind, ProjectTaskRequest,
+        ProjectTaskStatus, ProjectTaskStatusKind, ProjectTaskStatusRequest,
+        ProjectTaskTimelineQuery, ProjectTaskVolume,
     },
     role::{Role, RolePermission},
     user::UserAuthentication,
@@ -113,7 +115,7 @@ pub async fn get_project_tasks(
 
     match ProjectTask::find_many_timeline(&ProjectTaskTimelineQuery {
         project_id,
-        area_id: query.area_id.clone(),
+        area_id: query.area_id,
         task_id: None,
         status: query.status.clone(),
         relative: false,
@@ -487,6 +489,259 @@ pub async fn create_project_role(
     }
 }
 
+#[post("/projects/{project_id}/tasks/bulk")] // FINISHED
+pub async fn create_project_task_bulk(
+    project_id: web::Path<String>,
+    form: MultipartForm<ProjectTaskMultipartRequest>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let project_id = match project_id.parse() {
+        Ok(project_id) => project_id,
+        _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
+    };
+
+    let issuer_id = match req.extensions().get::<UserAuthentication>() {
+        Some(issuer) => issuer._id.unwrap(),
+        None => return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string()),
+    };
+    if !ProjectRole::validate(&project_id, &issuer_id, &ProjectRolePermission::CreateTask).await {
+        return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
+    }
+
+    if let Ok(Some(mut project)) = Project::find_by_id(&project_id).await {
+        if project.status.first().unwrap().kind != ProjectStatusKind::Pending {
+            return HttpResponse::BadRequest().body("PROJECT_STATUS_NOT_PENDING".to_string());
+        }
+
+        let path = form.file.file.path();
+
+        if let Ok(bytes) = fs::read(path) {
+            if fs::remove_file(path).is_err() {
+                return HttpResponse::InternalServerError()
+                    .body("PROJECT_TASK_CSV_DELETE_FAILED".to_string());
+            }
+
+            let mut row_index = -1;
+            let mut data_index = 0;
+            let mut data = String::new();
+            let mut area_index = 0;
+            let mut areas = Vec::<ProjectArea>::new();
+            let mut task_level = 0;
+            let mut task_value = Vec::<(usize, f64)>::new();
+            let mut tasks = Vec::<ProjectTask>::new();
+            let mut task: Option<ProjectTask> = None;
+            let mut total = 0.0;
+            for index in 1..=bytes.len() {
+                let string = if index == bytes.len() {
+                    String::from_utf8_lossy(&bytes[(index - 1)..])
+                } else {
+                    String::from_utf8_lossy(&bytes[(index - 1)..index])
+                };
+
+                if string == "\n" {
+                    if let Some(mut task) = task {
+                        if let Some(period) = task.period.as_mut() {
+                            if let Ok(date) = NaiveDate::parse_from_str(&data, "%d-%m-%Y") {
+                                period.end = DateTime::from_millis(
+                                    NaiveDateTime::new(
+                                        date,
+                                        NaiveTime::from_hms_milli_opt(23, 59, 59, 999).unwrap(),
+                                    )
+                                    .timestamp_millis(),
+                                )
+                            }
+                        }
+                        tasks.push(task);
+                    }
+                    task = None;
+                    row_index += 1;
+                    data_index = 0;
+                    data.clear();
+                } else if string == "," || string == ";" {
+                    if row_index >= 0 {
+                        if data_index == 0 && !data.is_empty() {
+                            if !areas.is_empty() {
+                                area_index += 1;
+                            }
+                            areas.push(ProjectArea {
+                                _id: ObjectId::new(),
+                                name: data.clone(),
+                            });
+                        } else if data_index == 1 && !data.is_empty() {
+                            let mut task_id: Option<ObjectId> = None;
+                            let mut level = 0;
+                            let name = data
+                                .clone()
+                                .chars()
+                                .filter(|c| {
+                                    if *c == '_' {
+                                        level += 1;
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .collect();
+
+                            match level.cmp(&task_level) {
+                                cmp::Ordering::Greater => task_level += 1,
+                                cmp::Ordering::Less => {
+                                    let mut total = 0.0;
+                                    let task_complete = &task_value[level..];
+                                    for (index, value) in task_complete.iter().rev() {
+                                        let task_id = tasks.get(*index).unwrap()._id;
+                                        for (index, task) in tasks[*index..].iter_mut().enumerate()
+                                        {
+                                            if index == 0 {
+                                                total += *value;
+                                                task.value = total;
+                                            } else if task.task_id == task_id && task.value != 0.0 {
+                                                task.value = task.value / total * 100.0;
+                                            }
+                                        }
+                                    }
+                                    task_value.truncate(level);
+                                    task_level = level;
+                                }
+                                _ => (),
+                            };
+
+                            if let Some((index, _)) = task_value.last() {
+                                task_id = tasks.get(*index).unwrap()._id;
+                            }
+
+                            task = Some(ProjectTask {
+                                _id: Some(ObjectId::new()),
+                                project_id,
+                                area_id: areas.get(area_index).unwrap()._id,
+                                task_id,
+                                user_id: None,
+                                name,
+                                description: None,
+                                period: None,
+                                status: vec![ProjectTaskStatus {
+                                    kind: ProjectTaskStatusKind::Pending,
+                                    time: DateTime::from_millis(Utc::now().timestamp_millis()),
+                                    message: None,
+                                }],
+                                volume: None,
+                                value: 0.0,
+                            });
+                        } else if data_index == 2 && !data.is_empty() {
+                            if let Some(task) = task.as_mut() {
+                                if let Ok(value) = data.parse::<usize>() {
+                                    task.volume = Some(ProjectTaskVolume {
+                                        value,
+                                        unit: "pcs".to_owned(),
+                                    });
+                                }
+                            }
+                        } else if data_index == 3 && !data.is_empty() {
+                            if let Some(task) = task.as_mut() {
+                                if let Some(volume) = task.volume.as_mut() {
+                                    volume.unit = data.clone();
+                                }
+                            }
+                        } else if data_index == 4 {
+                            if let Some(task) = task.as_mut() {
+                                if let Ok(value) = data.parse::<f64>() {
+                                    if let Some(parent_value) = task_value.last_mut() {
+                                        parent_value.1 =
+                                            ((parent_value.1 + value) * 1e6_f64).round() / 1e6_f64;
+                                    }
+                                    total = ((total + value) * 1e6_f64).round() / 1e6_f64;
+                                    task.value = value;
+                                } else {
+                                    task_value.push((tasks.len(), 0.0));
+                                    task.value = 0.0;
+                                }
+                            }
+                        } else if data_index == 5 && !data.is_empty() {
+                            if let Some(task) = task.as_mut() {
+                                if let Ok(date) = NaiveDate::parse_from_str(&data, "%d-%m-%Y") {
+                                    task.period = Some(ProjectTaskPeriod {
+                                        start: DateTime::from_millis(
+                                            NaiveDateTime::new(
+                                                date,
+                                                NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap(),
+                                            )
+                                            .timestamp_millis(),
+                                        ),
+                                        end: DateTime::from_millis(
+                                            NaiveDateTime::new(
+                                                date,
+                                                NaiveTime::from_hms_milli_opt(23, 59, 59, 999)
+                                                    .unwrap(),
+                                            )
+                                            .timestamp_millis(),
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    data_index += 1;
+                    data.clear();
+                } else {
+                    data.push_str(&string);
+                }
+            }
+
+            if (total - 100.0).abs() > 0.001 {
+                return HttpResponse::BadRequest().body("PROJECT_TASK_INVALID_VALUE");
+            }
+
+            if let Some(mut task) = task {
+                if let Some(period) = task.period.as_mut() {
+                    if let Ok(date) = NaiveDate::parse_from_str(&data, "%d-%m-%Y") {
+                        period.end = DateTime::from_millis(
+                            NaiveDateTime::new(
+                                date,
+                                NaiveTime::from_hms_milli_opt(23, 59, 59, 999).unwrap(),
+                            )
+                            .timestamp_millis(),
+                        )
+                    }
+                }
+                tasks.push(task);
+            }
+
+            let mut total = 0.0;
+            for (index, value) in task_value.iter().rev() {
+                let task_id = tasks.get(*index).unwrap()._id;
+                for (index, task) in tasks[*index..].iter_mut().enumerate() {
+                    if index == 0 {
+                        total += *value;
+                        task.value = total;
+                    } else if task.task_id == task_id && task.value != 0.0 {
+                        task.value = task.value / total * 100.0;
+                    }
+                }
+            }
+
+            if ProjectTask::delete_many_by_project_id(&project_id)
+                .await
+                .is_err()
+            {
+                return HttpResponse::InternalServerError().body("PROJECT_TASK_DELETE_FAILED");
+            }
+            if project.replace_areas(areas).await.is_err() {
+                return HttpResponse::InternalServerError().body("PROJECT_AREA_CREATION_FAILED");
+            }
+            match ProjectTask::save_bulk(tasks).await {
+                Ok(task_id) => HttpResponse::Created().json(doc! {
+                    "_id": to_bson::<Vec<ObjectId>>(&task_id).unwrap()
+                }),
+                Err(error) => HttpResponse::InternalServerError().body(error),
+            }
+        } else {
+            HttpResponse::BadRequest().body("PROJECT_TASK_CSV_UPLOAD_FAILED")
+        }
+    } else {
+        HttpResponse::BadRequest().body("PROJECT_TASK_CSV_UPLOAD_FAILED")
+    }
+}
 #[post("/projects/{project_id}/tasks")] // FINISHED
 pub async fn create_project_task(
     project_id: web::Path<String>,
@@ -542,7 +797,7 @@ pub async fn create_project_task_sub(
     payload: web::Json<Vec<ProjectTaskRequest>>,
     req: HttpRequest,
 ) -> HttpResponse {
-    let (project_id, task_id) = match (_id.0.parse(), _id.1.parse()) {
+    let (project_id, task_id) = match (_id.0.parse(), _id.1.parse::<ObjectId>()) {
         (Ok(project_id), Ok(task_id)) => (project_id, task_id),
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
     };
@@ -555,8 +810,20 @@ pub async fn create_project_task_sub(
         return HttpResponse::Unauthorized().body("UNAUTHORIZED".to_string());
     }
 
-    if ProjectTask::delete_many_by_task_id(&task_id).await.is_err() {
-        ();
+    if let Ok(Some(_)) = ProjectTask::find_many(&ProjectTaskQuery {
+        _id: None,
+        project_id: None,
+        task_id: Some(task_id),
+        area_id: None,
+        limit: None,
+        kind: None,
+    })
+    .await
+    {
+        if ProjectTask::delete_many_by_task_id(&task_id).await.is_err() {
+            return HttpResponse::InternalServerError()
+                .body("PROJECT_TASK_DELETION_FAILED".to_string());
+        }
     }
 
     if let Ok(Some(task)) = ProjectTask::find_by_id(&task_id).await {
