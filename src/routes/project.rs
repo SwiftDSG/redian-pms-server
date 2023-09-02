@@ -1188,7 +1188,7 @@ pub async fn update_project_report(
     };
 
     for (i, file) in form.files.iter().enumerate() {
-        if let Some(mut image) = documentation.get_mut(i) {
+        if let Some(image) = documentation.get_mut(i) {
             let mut ext = String::new();
             if let Some(file_name) = &file.file_name {
                 if let Some(name) = Path::new(file_name).extension().and_then(OsStr::to_str) {
