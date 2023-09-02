@@ -57,7 +57,8 @@ pub enum ProjectQueryStatusKind {
 pub enum ProjectQuerySortKind {
     Latest,
     Oldest,
-    Alphabetical,
+    AZ,
+    ZA,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -480,6 +481,35 @@ impl Project {
                 }
             }
         });
+
+        if let Some(sort) = &query.sort {
+            if sort == &ProjectQuerySortKind::AZ {
+                pipeline.push(doc! {
+                    "$sort": {
+                        "name": 1
+                    }
+                });
+            } else if sort == &ProjectQuerySortKind::ZA {
+                pipeline.push(doc! {
+                    "$sort": {
+                        "name": -1
+                    }
+                });
+            } else if sort == &ProjectQuerySortKind::Latest {
+                pipeline.push(doc! {
+                    "$sort": {
+                        "create_date": -1
+                    }
+                });
+            } else if sort == &ProjectQuerySortKind::Oldest {
+                pipeline.push(doc! {
+                    "$sort": {
+                        "create_date": 1
+                    }
+                });
+            }
+        }
+
         pipeline.push(doc! {
             "$lookup": {
                 "from": "customers",
@@ -548,35 +578,14 @@ impl Project {
             }
         });
 
-        if let Some(sort) = &query.sort {
-            if sort == &ProjectQuerySortKind::Alphabetical {
-                pipeline.push(doc! {
-                    "$sort": {
-                        "name": -1
-                    }
-                });
-            } else if sort == &ProjectQuerySortKind::Latest {
-                pipeline.push(doc! {
-                    "$sort": {
-                        "create_date": -1
-                    }
-                });
-            } else if sort == &ProjectQuerySortKind::Oldest {
-                pipeline.push(doc! {
-                    "$sort": {
-                        "create_date": 1
-                    }
-                });
-            }
+        if let Some(skip) = query.skip {
+            pipeline.push(doc! {
+                "$skip": to_bson::<usize>(&skip).unwrap()
+            });
         }
         if let Some(limit) = query.limit {
             pipeline.push(doc! {
                 "$limit": to_bson::<usize>(&limit).unwrap()
-            });
-        }
-        if let Some(skip) = query.skip {
-            pipeline.push(doc! {
-                "$skip": to_bson::<usize>(&skip).unwrap()
             });
         }
 
