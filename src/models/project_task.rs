@@ -89,6 +89,7 @@ pub struct ProjectTaskMinResponse {
     pub user: Option<Vec<ProjectTaskUserResponse>>,
     pub task: Option<Vec<ProjectTaskTaskResponse>>,
     pub name: String,
+    pub description: Option<String>,
     pub period: Option<ProjectTaskPeriodResponse>,
     pub actual: Option<ProjectTaskPeriodResponse>,
     pub status: Vec<ProjectTaskStatus>,
@@ -479,32 +480,44 @@ impl ProjectTask {
                 "$eq": [ "$task_id", to_bson::<ObjectId>(_id).unwrap() ]
             });
         }
-        if let Some(kind) = query.kind.clone() {
-            if kind == ProjectTaskQueryKind::Root {
+        if let Some(kind) = &query.kind {
+            if kind == &ProjectTaskQueryKind::Root {
                 queries.push(doc! {
                     "$eq": [ "$task_id", to_bson::<Option<ObjectId>>(&None).unwrap() ]
                 });
             } else {
                 let mut task_id: Vec<ObjectId> = Vec::new();
-                if let Ok(mut cursor) = collection
-                    .find(
-                        doc! {
-                            "project_id": to_bson::<Option<ObjectId>>(&query.project_id).unwrap()
-                        },
-                        None,
-                    )
-                    .await
-                {
-                    while let Some(Ok(task)) = cursor.next().await {
-                        if let Some(_id) = task.task_id {
-                            if !task_id.contains(&_id) {
-                                task_id.push(_id);
+                if let Some(_id) = &query.project_id {
+                    if let Ok(mut cursor) = collection
+                        .find(
+                            doc! {
+                                "project_id": to_bson::<ObjectId>(_id).unwrap()
+                            },
+                            None,
+                        )
+                        .await
+                    {
+                        while let Some(Ok(task)) = cursor.next().await {
+                            if let Some(_id) = task.task_id {
+                                if !task_id.contains(&_id) {
+                                    task_id.push(_id);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if let Ok(mut cursor) = collection.find(None, None).await {
+                        while let Some(Ok(task)) = cursor.next().await {
+                            if let Some(_id) = task.task_id {
+                                if !task_id.contains(&_id) {
+                                    task_id.push(_id);
+                                }
                             }
                         }
                     }
                 }
 
-                if kind == ProjectTaskQueryKind::Dependency {
+                if kind == &ProjectTaskQueryKind::Dependency {
                     queries.push(doc! {
                         "$in": ["$_id", to_bson::<Vec<ObjectId>>(&task_id).unwrap()]
                     });
@@ -757,6 +770,7 @@ impl ProjectTask {
                 "user": "$user",
                 "task": "$task",
                 "name": "$name",
+                "description": "$description",
                 "period": {
                     "$cond": [
                         "$period",

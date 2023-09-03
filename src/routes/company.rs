@@ -76,8 +76,9 @@ pub async fn update_company(
         let payload = payload.into_inner();
 
         if company.image.is_some() {
-            let old_path = format!("./files/companies/{company_id}",);
-            remove_dir_all(old_path).expect("COMPANY_IMAGE_DELETION_FAILED");
+            match remove_dir_all(format!("./files/companies/{company_id}")) {
+                _ => (),
+            };
         }
         company = Company {
             _id: Some(company_id),
@@ -148,29 +149,34 @@ pub async fn update_company_image(
                     Ok(company_id) => HttpResponse::Ok().body(company_id.to_string()),
                     Err(error) => {
                         company.image = None;
-                        company
-                            .update()
-                            .await
-                            .expect("COMPANY_IMAGE_DELETION_FAILED");
-                        HttpResponse::BadRequest().body(error.to_string())
+                        if company.update().await.is_err() {
+                            HttpResponse::InternalServerError()
+                                .body("COMPANY_IMAGE_DELETION_FAILED".to_string())
+                        } else {
+                            HttpResponse::BadRequest().body(error.to_string())
+                        }
                     }
                 }
             } else {
                 company.image = None;
-                remove_dir_all(file_path).expect("COMPANY_IMAGE_DELETION_FAILED");
-                company
-                    .update()
-                    .await
-                    .expect("COMPANY_IMAGE_DELETION_FAILED");
-                HttpResponse::InternalServerError().body("COMPANY_IMAGE_RENAME_FAILED".to_string())
+                if company.update().await.is_err() {
+                    HttpResponse::InternalServerError()
+                        .body("COMPANY_IMAGE_DELETION_FAILED".to_string())
+                } else {
+                    match remove_dir_all(file_path) {
+                        _ => HttpResponse::InternalServerError()
+                            .body("COMPANY_IMAGE_RENAME_FAILED".to_string()),
+                    }
+                }
             }
         } else {
             company.image = None;
-            company
-                .update()
-                .await
-                .expect("COMPANY_IMAGE_DELETION_FAILED");
-            HttpResponse::InternalServerError().body("COMPANY_IMAGE_INVALID_MIME".to_string())
+            if company.update().await.is_err() {
+                HttpResponse::InternalServerError()
+                    .body("COMPANY_IMAGE_DELETION_FAILED".to_string())
+            } else {
+                HttpResponse::InternalServerError().body("COMPANY_IMAGE_INVALID_MIME".to_string())
+            }
         }
     } else {
         HttpResponse::NotFound().body("COMPANY_NOT_FOUND")

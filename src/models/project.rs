@@ -121,7 +121,7 @@ pub struct ProjectMinResponse {
     pub status: Vec<ProjectStatus>,
     pub progress: Option<ProjectProgressResponse>,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProjectProgressResponse {
     pub plan: f64,
     pub actual: f64,
@@ -131,13 +131,13 @@ pub struct ProjectProgressGraphResponse {
     pub x: i64,
     pub y: Vec<f64>,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProjectCustomerResponse {
     pub _id: String,
     pub name: String,
     pub image: Option<ProjectCustomerImageResponse>,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProjectCustomerImageResponse {
     pub _id: String,
     pub extension: String,
@@ -148,7 +148,7 @@ pub struct ProjectAreaResponse {
     pub name: String,
     pub task: Option<Vec<ProjectTaskMinResponse>>,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProjectPeriodResponse {
     pub start: String,
     pub end: String,

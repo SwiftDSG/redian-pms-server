@@ -151,7 +151,9 @@ pub async fn update_user(
 
         if user.image.is_some() {
             let old_path = format!("./files/users/{user_id}",);
-            remove_dir_all(old_path).expect("USER_IMAGE_DELETION_FAILED");
+            match remove_dir_all(old_path) {
+                _ => (),
+            };
         }
 
         let mut user = User {
@@ -229,26 +231,33 @@ pub async fn update_user_image(
                     Ok(user_id) => HttpResponse::Ok().body(user_id.to_string()),
                     Err(error) => {
                         user.image = None;
-                        user.update(false)
-                            .await
-                            .expect("USER_IMAGE_DELETION_FAILED");
-                        HttpResponse::BadRequest().body(error.to_string())
+                        if user.update(false).await.is_err() {
+                            HttpResponse::InternalServerError()
+                                .body("USER_IMAGE_DELETION_FAILED".to_string())
+                        } else {
+                            HttpResponse::BadRequest().body(error.to_string())
+                        }
                     }
                 }
             } else {
                 user.image = None;
-                remove_dir_all(file_path).expect("USER_IMAGE_DELETION_FAILED");
-                user.update(false)
-                    .await
-                    .expect("USER_IMAGE_DELETION_FAILED");
-                HttpResponse::InternalServerError().body("USER_IMAGE_RENAME_FAILED".to_string())
+                if user.update(false).await.is_err() {
+                    HttpResponse::InternalServerError()
+                        .body("USER_IMAGE_DELETION_FAILED".to_string())
+                } else {
+                    match remove_dir_all(file_path) {
+                        _ => HttpResponse::InternalServerError()
+                            .body("USER_IMAGE_RENAME_FAILED".to_string()),
+                    }
+                }
             }
         } else {
             user.image = None;
-            user.update(false)
-                .await
-                .expect("USER_IMAGE_DELETION_FAILED");
-            HttpResponse::InternalServerError().body("USER_IMAGE_INVALID_MIME".to_string())
+            if user.update(false).await.is_err() {
+                HttpResponse::InternalServerError().body("USER_IMAGE_DELETION_FAILED".to_string())
+            } else {
+                HttpResponse::InternalServerError().body("USER_IMAGE_INVALID_MIME".to_string())
+            }
         }
     } else {
         HttpResponse::NotFound().body("USER_NOT_FOUND")

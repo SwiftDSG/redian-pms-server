@@ -104,7 +104,9 @@ pub async fn update_customer(
 
         if customer.image.is_some() {
             let old_path = format!("./files/customers/{customer_id}",);
-            remove_dir_all(old_path).expect("CUSTOMER_IMAGE_DELETION_FAILED");
+            match remove_dir_all(old_path) {
+                _ => (),
+            };
         }
 
         let mut customer = Customer {
@@ -179,29 +181,34 @@ pub async fn update_customer_image(
                     Ok(customer_id) => HttpResponse::Ok().body(customer_id.to_string()),
                     Err(error) => {
                         customer.image = None;
-                        customer
-                            .update()
-                            .await
-                            .expect("CUSTOMER_IMAGE_DELETION_FAILED");
-                        HttpResponse::BadRequest().body(error.to_string())
+                        if customer.update().await.is_err() {
+                            HttpResponse::InternalServerError()
+                                .body("CUSTOMER_IMAGE_DELETION_FAILED".to_string())
+                        } else {
+                            HttpResponse::BadRequest().body(error.to_string())
+                        }
                     }
                 }
             } else {
                 customer.image = None;
-                remove_dir_all(file_path).expect("CUSTOMER_IMAGE_DELETION_FAILED");
-                customer
-                    .update()
-                    .await
-                    .expect("CUSTOMER_IMAGE_DELETION_FAILED");
-                HttpResponse::InternalServerError().body("CUSTOMER_IMAGE_RENAME_FAILED".to_string())
+                if customer.update().await.is_err() {
+                    HttpResponse::InternalServerError()
+                        .body("CUSTOMER_IMAGE_DELETION_FAILED".to_string())
+                } else {
+                    match remove_dir_all(file_path) {
+                        _ => HttpResponse::InternalServerError()
+                            .body("CUSTOMER_IMAGE_RENAME_FAILED".to_string()),
+                    }
+                }
             }
         } else {
             customer.image = None;
-            customer
-                .update()
-                .await
-                .expect("CUSTOMER_IMAGE_DELETION_FAILED");
-            HttpResponse::InternalServerError().body("CUSTOMER_IMAGE_INVALID_MIME".to_string())
+            if customer.update().await.is_err() {
+                HttpResponse::InternalServerError()
+                    .body("CUSTOMER_IMAGE_DELETION_FAILED".to_string())
+            } else {
+                HttpResponse::InternalServerError().body("CUSTOMER_IMAGE_INVALID_MIME".to_string())
+            }
         }
     } else {
         HttpResponse::NotFound().body("CUSTOMER_NOT_FOUND")

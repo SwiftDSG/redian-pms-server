@@ -68,6 +68,7 @@ async fn main() -> io::Result<()> {
             .service(
                 web::scope(&std::env::var("BASE_PATH").unwrap())
                     .service(routes::get_file)
+                    .service(routes::get_overview)
                     .service(routes::company::get_company)
                     .service(routes::company::create_company)
                     .service(routes::company::update_company)
