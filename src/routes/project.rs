@@ -35,10 +35,17 @@ use crate::models::{
     user::UserAuthentication,
 };
 
+#[derive(Clone, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectTaskQueryParamsKind {
+    Full,
+    Default,
+}
 #[derive(Deserialize, Clone)]
 pub struct ProjectTaskQueryParams {
     pub area_id: Option<ObjectId>,
     pub status: Option<ProjectTaskStatusKind>,
+    pub kind: Option<ProjectTaskQueryParamsKind>,
 }
 #[derive(Deserialize)]
 pub struct ProjectIncidentReportQueryParams {
@@ -49,16 +56,16 @@ pub struct ProjectStatusQueryParams {
     pub status: ProjectStatusKind,
 }
 #[derive(Deserialize)]
+pub struct ProjectProgressQueryParams {
+    pub area_id: Option<ObjectId>,
+}
+#[derive(Deserialize)]
 pub struct ProjectQueryParams {
     pub status: Option<ProjectQueryStatusKind>,
     pub sort: Option<ProjectQuerySortKind>,
     pub text: Option<String>,
     pub limit: Option<usize>,
     pub skip: Option<usize>,
-}
-#[derive(Deserialize)]
-pub struct ProjectProgressQueryParams {
-    pub area_id: Option<ObjectId>,
 }
 
 #[get("/projects")]
@@ -113,16 +120,22 @@ pub async fn get_project_tasks(
         _ => return HttpResponse::BadRequest().body("INVALID_ID".to_string()),
     };
 
-    match ProjectTask::find_many_timeline(&ProjectTaskTimelineQuery {
+    let mut task_query = ProjectTaskTimelineQuery {
         project_id,
         area_id: query.area_id,
         task_id: None,
         status: query.status.clone(),
         relative: false,
         subtask: false,
-    })
-    .await
-    {
+    };
+
+    if query.kind == Some(ProjectTaskQueryParamsKind::Full) {
+        task_query.area_id = None;
+        task_query.status = None;
+        task_query.relative = true;
+    }
+
+    match ProjectTask::find_many_timeline(&task_query).await {
         Ok(Some(tasks)) => HttpResponse::Ok().json(tasks),
         Ok(None) => HttpResponse::Ok().json(Vec::<ProjectTaskMinResponse>::new()),
         Err(error) => HttpResponse::InternalServerError().body(error),

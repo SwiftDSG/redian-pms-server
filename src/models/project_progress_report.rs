@@ -103,8 +103,8 @@ pub struct ProjectProgressReportMinResponse {
     pub date: String,
     pub time: Option<[[usize; 2]; 2]>,
     pub member: Option<Vec<ProjectMemberResponse>>,
-    pub actual: Option<Vec<ProjectProgressReportActual>>,
-    pub plan: Option<Vec<ProjectProgressReportPlan>>,
+    pub actual: Option<Vec<ProjectProgressReportActualMinResponse>>,
+    pub plan: Option<Vec<ProjectProgressReportPlanMinResponse>>,
     pub weather: Option<Vec<ProjectProgressReportWeather>>,
     pub documentation: Option<Vec<ProjectProgressReportDocumentation>>,
     pub progress: f64,
@@ -120,9 +120,18 @@ pub struct ProjectProgressReportProjectResponse {
     pub name: String,
 }
 #[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectProgressReportPlanMinResponse {
+    pub task_id: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectProgressReportPlanResponse {
     pub _id: String,
     pub name: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProjectProgressReportActualMinResponse {
+    pub task_id: String,
+    pub value: f64,
 }
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectProgressReportActualResponse {

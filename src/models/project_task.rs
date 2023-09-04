@@ -84,7 +84,7 @@ pub struct ProjectTaskResponse {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectTaskMinResponse {
     pub _id: String,
-    pub task_id: Option<ObjectId>,
+    pub task_id: Option<String>,
     pub area_id: String,
     pub user: Option<Vec<ProjectTaskUserResponse>>,
     pub task: Option<Vec<ProjectTaskTaskResponse>>,
@@ -763,7 +763,15 @@ impl ProjectTask {
                 "_id": {
                     "$toString": "$_id"
                 },
-                "task_id": "$task_id",
+                "task_id": {
+                    "$cond": [
+                        "$task_id",
+                        {
+                            "$toString": "$task_id"
+                        },
+                        to_bson::<Option<String>>(&None).unwrap()
+                    ]
+                },
                 "area_id": {
                     "$toString": "$area_id"
                 },
@@ -879,20 +887,22 @@ impl ProjectTask {
             if !tasks.is_empty() {
                 if !dependencies.is_empty() {
                     for task in tasks.iter_mut() {
-                        let mut _id = task.task_id;
-                        let mut found = true;
-                        while found {
-                            if let Some(task_id) = _id {
-                                if let Some(index) =
-                                    dependencies.iter().position(|a| a._id.unwrap() == task_id)
-                                {
-                                    task.value *= dependencies[index].value / 100.0;
-                                    _id = dependencies[index].task_id;
+                        if let Some(task_id) = &task.task_id {
+                            let mut _id = Some(task_id.clone().parse::<ObjectId>().unwrap());
+                            let mut found = true;
+                            while found {
+                                if let Some(task_id) = _id {
+                                    if let Some(index) =
+                                        dependencies.iter().position(|a| a._id.unwrap() == task_id)
+                                    {
+                                        task.value *= dependencies[index].value / 100.0;
+                                        _id = dependencies[index].task_id;
+                                    } else {
+                                        found = false;
+                                    }
                                 } else {
                                     found = false;
                                 }
-                            } else {
-                                found = false;
                             }
                         }
                     }

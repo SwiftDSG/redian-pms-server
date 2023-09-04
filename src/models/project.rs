@@ -1662,14 +1662,33 @@ impl Project {
                             "actual": {
                                 "$cond": [
                                     "$report.actual",
-                                    "$report.actual",
+                                    {
+                                        "$map": {
+                                            "input": "$report.actual",
+                                            "in": {
+                                                "task_id": {
+                                                    "$toString": "$$this.task_id"
+                                                },
+                                                "value": "$$this.value"
+                                            }
+                                        }
+                                    },
                                     []
                                 ]
                             },
                             "plan": {
                                 "$cond": [
                                     "$report.plan",
-                                    "$report.plan",
+                                    {
+                                        "$map": {
+                                            "input": "$report.plan",
+                                            "in": {
+                                                "task_id": {
+                                                    "$toString": "$$this.task_id"
+                                                },
+                                            }
+                                        }
+                                    },
                                     []
                                 ]
                             },
@@ -1729,11 +1748,13 @@ impl Project {
                     if let Some(progress) = report.progress.as_mut() {
                         if let Some(tasks) = &progress.actual {
                             for task in tasks.iter() {
-                                if let Ok(Some(base)) = ProjectTask::find_by_id(&task.task_id).await
+                                let mut _id =
+                                    Some(task.task_id.clone().parse::<ObjectId>().unwrap());
+                                if let Ok(Some(base)) = ProjectTask::find_by_id(&_id.unwrap()).await
                                 {
-                                    let mut _id = base.task_id;
                                     let mut found = true;
                                     let mut count = task.value * base.value / 100.0;
+                                    _id = base.task_id;
 
                                     while found {
                                         if let Some(task_id) = _id {
